@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..700;1,400..700&family=Inter:wght@300..700&family=JetBrains+Mono:wght@400;500;600&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+  :root {
+    --font-serif:'Lora',Georgia,serif;
+    --font-editorial:'Crimson Text','Lora',Georgia,serif;
+    --font-sans:'Inter',system-ui,-apple-system,Arial,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,monospace;
+    --color-bg:#f9f9f9; --color-surface:#ffffff; --color-surface-hover:#f5f5f5;
+    --color-text:#222222; --color-text-secondary:#666666; --color-muted:#b0b0b0; --color-border:#e0e0e0;
+    --color-primary:#2a5d8f; --color-primary-rgb:42,93,143; --color-secondary:#e0a96d; --color-accent:#e4572e;
+    --color-header-bg:rgba(255,255,255,0.95); --color-code-bg:#f8f8f8; --color-code-text:#333;
+    --color-success:#2e7d32; --color-warning:#ed6c02; --color-error:#d32f2f;
+    --radius-sm:4px; --radius-md:6px; --radius-lg:8px; --radius-xl:12px; --radius-pill:20px;
+    --shadow-sm:0 2px 8px rgba(0,0,0,.10); --shadow-md:0 4px 12px rgba(0,0,0,.10); --shadow-lg:0 8px 25px rgba(0,0,0,.15);
+    --shadow-focus:0 0 0 3px rgba(42,93,143,.10);
+  }
+  [data-theme="dark"] {
+    --color-bg:#181a1b; --color-surface:#2a2a2a; --color-surface-hover:#3a3a3a;
+    --color-text:#f9f9f9; --color-text-secondary:#cccccc; --color-muted:#777; --color-border:#444;
+    --color-primary:#4a90e2; --color-primary-rgb:74,144,226; --color-secondary:#f5c16c; --color-accent:#ff6f61;
+    --color-header-bg:rgba(24,26,27,0.95); --color-code-bg:#232526; --color-code-text:#f0f0f0;
+    --color-success:#66bb6a; --color-warning:#ffa726; --color-error:#ef5350;
+    --shadow-focus:0 0 0 3px rgba(74,144,226,.20);
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; }
+  ::selection { background:rgba(var(--color-primary-rgb),.20); }
+  @keyframes ledpulse { 0%,100%{opacity:1} 50%{opacity:.28} }
+  @keyframes recring { 0%{transform:scale(1);opacity:.5} 100%{transform:scale(1.9);opacity:0} }
+  @keyframes fadeup { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+  input:focus, button:focus-visible { outline:none; box-shadow:var(--shadow-focus); }
+</style>
+</helmet>
+
+<div data-theme="{{ theme }}" style="min-height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-sans);transition:background .3s ease,color .3s ease;display:flex;flex-direction:column;">
+
+  <!-- ============ HEADER ============ -->
+  <header style="position:sticky;top:0;z-index:50;background:var(--color-header-bg);backdrop-filter:blur(10px);border-bottom:1px solid var(--color-border);">
+    <div style="max-width:1100px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;justify-content:space-between;gap:20px;">
+      <div style="display:flex;align-items:center;gap:14px;cursor:pointer;" onClick="{{ goList }}">
+        <div style="width:38px;height:38px;border-radius:var(--radius-md);background:var(--color-primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>
+        </div>
+        <div style="line-height:1.1;">
+          <div style="font-family:var(--font-serif);font-weight:700;font-size:20px;letter-spacing:-.01em;">earshot</div>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--color-muted);margin-top:1px;">Raspberry Pi</div>
+        </div>
+      </div>
+
+      <nav style="display:flex;align-items:center;gap:8px;">
+        <a onClick="{{ goList }}" style="cursor:pointer;font-size:14px;font-weight:600;padding:7px 12px;border-radius:var(--radius-md);color:{{ navSessions.color }};background:{{ navSessions.bg }};">Sessions</a>
+        <a onClick="{{ goSettings }}" style="cursor:pointer;font-size:14px;font-weight:600;padding:7px 12px;border-radius:var(--radius-md);color:{{ navSettings.color }};background:{{ navSettings.bg }};">Settings</a>
+      </nav>
+
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div title="Device status — mirrors the on-device LED" style="display:flex;align-items:center;gap:9px;padding:6px 13px 6px 11px;border:1px solid var(--color-border);border-radius:var(--radius-pill);background:var(--color-surface);">
+          <span style="{{ ledDotStyle }}"></span>
+          <span style="font-family:var(--font-mono);font-size:12px;font-weight:500;color:var(--color-text-secondary);white-space:nowrap;">{{ deviceLabel }}</span>
+        </div>
+        <button onClick="{{ toggleTheme }}" title="Toggle theme" style="width:40px;height:40px;border-radius:50%;border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;font-size:16px;display:inline-flex;align-items:center;justify-content:center;">{{ themeIcon }}</button>
+      </div>
+    </div>
+  </header>
+
+  <main style="flex:1;max-width:1100px;width:100%;margin:0 auto;padding:32px 24px 80px;">
+
+    <!-- ==================== SESSIONS / DASHBOARD ==================== -->
+    <sc-if value="{{ isList }}" hint-placeholder-val="{{ true }}">
+    <div style="animation:fadeup .3s ease;">
+
+      <section style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-xl);padding:32px;display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
+        <div style="position:relative;width:112px;height:112px;flex-shrink:0;">
+          <span style="{{ recRingStyle }}"></span>
+          <button onClick="{{ toggleRecord }}" style="{{ recBtnStyle }}">
+            <span style="{{ recIconStyle }}"></span>
+          </button>
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <div style="font-family:var(--font-mono);font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--color-muted);margin-bottom:6px;">{{ recEyebrow }}</div>
+          <div style="font-family:var(--font-serif);font-weight:700;font-size:30px;line-height:1.1;">{{ recHeadline }}</div>
+          <div style="color:var(--color-text-secondary);font-size:15px;margin-top:8px;max-width:420px;line-height:1.5;">{{ recSub }}</div>
+        </div>
+        <div style="min-width:190px;flex-shrink:0;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;font-family:var(--font-mono);color:var(--color-text-secondary);margin-bottom:7px;"><span>Disk</span><span>{{ diskLabel }}</span></div>
+          <div style="height:8px;border-radius:99px;background:var(--color-surface-hover);overflow:hidden;border:1px solid var(--color-border);">
+            <div style="{{ diskBarStyle }}"></div>
+          </div>
+          <div style="font-size:12px;color:var(--color-muted);margin-top:7px;font-family:var(--font-mono);">{{ diskFreeLabel }}</div>
+        </div>
+      </section>
+
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin:40px 0 16px;gap:16px;flex-wrap:wrap;">
+        <div>
+          <h2 style="font-family:var(--font-serif);font-weight:700;font-size:28px;margin:0;">Sessions</h2>
+          <div style="font-size:13px;color:var(--color-muted);margin-top:4px;font-family:var(--font-mono);">{{ sessionsCountLabel }}</div>
+        </div>
+        <sc-if value="{{ hasPending }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ transcribeAll }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:var(--radius-md);border:1px solid var(--color-primary);background:var(--color-surface);color:var(--color-primary);cursor:pointer;display:inline-flex;align-items:center;gap:8px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4z"></path><path d="M4 14h10v6H4z"></path><path d="M18 14l4 3-4 3z"></path></svg>
+            Transcribe all pending
+          </button>
+        </sc-if>
+      </div>
+
+      <sc-if value="{{ isEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="text-align:center;padding:72px 24px;border:1px dashed var(--color-border);border-radius:var(--radius-xl);background:var(--color-surface);">
+          <div style="font-size:40px;margin-bottom:8px;opacity:.5;">🎙️</div>
+          <div style="font-family:var(--font-serif);font-weight:700;font-size:22px;">No recordings yet</div>
+          <div style="color:var(--color-text-secondary);max-width:380px;margin:10px auto 0;line-height:1.6;">Press the button on the device — or the record control above — to capture your first session. Recordings stay on the Pi until you remove them.</div>
+        </div>
+      </sc-if>
+
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <sc-for list="{{ sessions }}" as="s" hint-placeholder-count="4">
+          <div onClick="{{ s.open }}" style="{{ s.rowStyle }}">
+            <div style="width:10px;height:10px;border-radius:50%;background:{{ s.color }};flex-shrink:0;box-shadow:0 0 0 4px {{ s.colorSoft }};"></div>
+            <div style="min-width:0;flex:1;">
+              <div style="font-family:var(--font-sans);font-weight:600;font-size:15px;color:var(--color-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ s.title }}</div>
+              <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-top:3px;">{{ s.subtitle }}</div>
+            </div>
+            <div style="font-family:var(--font-mono);font-size:13px;color:var(--color-text-secondary);width:96px;text-align:right;">{{ s.durationLabel }}</div>
+            <div style="font-family:var(--font-mono);font-size:13px;color:var(--color-muted);width:82px;text-align:right;">{{ s.sizeLabel }}</div>
+            <div style="width:210px;display:flex;justify-content:flex-end;">
+              <span style="{{ s.badgeStyle }}">{{ s.statusLabel }}</span>
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M9 18l6-6-6-6"></path></svg>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+    </sc-if>
+
+    <!-- ==================== SESSION DETAIL ==================== -->
+    <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+    <div style="animation:fadeup .3s ease;">
+      <a onClick="{{ goList }}" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:var(--color-text-secondary);margin-bottom:20px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"></path><path d="M12 19l-7-7 7-7"></path></svg>
+        All sessions
+      </a>
+
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+        <div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <input value="{{ sel.name }}" onInput="{{ renameSel }}" placeholder="{{ sel.id }}" title="Name this session — the ID stays its identity" style="font-family:var(--font-serif);font-weight:700;font-size:32px;line-height:1.15;margin:0 0 0 -8px;padding:2px 8px;border:1px solid transparent;background:transparent;color:var(--color-text);border-radius:var(--radius-md);min-width:320px;max-width:100%;" />
+            <span style="{{ sel.badgeStyle }}">{{ sel.statusLabel }}</span>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:13px;color:var(--color-muted);margin-top:8px;">{{ sel.metaLine }}</div>
+        </div>
+        <div style="display:flex;gap:9px;flex-wrap:wrap;">
+          <button onClick="{{ download }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 15px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;display:inline-flex;align-items:center;gap:7px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M7 10l5 5 5-5"></path><path d="M12 15V3"></path></svg>
+            Download Audio
+          </button>
+          <button onClick="{{ askDelete }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 15px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-error);cursor:pointer;display:inline-flex;align-items:center;gap:7px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path></svg>
+            Delete
+          </button>
+        </div>
+      </div>
+
+      <section style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:22px 24px;margin-top:24px;display:flex;align-items:center;gap:20px;">
+        <button onClick="{{ togglePlay }}" style="width:52px;height:52px;border-radius:50%;border:none;background:var(--color-primary);color:#fff;cursor:pointer;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;">
+          <span style="{{ playIconStyle }}"></span>
+        </button>
+        <div style="flex:1;min-width:0;">
+          <div style="height:6px;border-radius:99px;background:var(--color-surface-hover);border:1px solid var(--color-border);overflow:hidden;">
+            <div style="{{ playBarStyle }}"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-top:10px;">
+            <span>{{ playPosLabel }}</span><span>{{ sel.durationClock }}</span>
+          </div>
+        </div>
+      </section>
+
+      <sc-if value="{{ sel.isFailed }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-top:22px;border:1px solid var(--color-error);border-radius:var(--radius-lg);background:rgba(211,47,47,.06);padding:18px 20px;display:flex;gap:14px;align-items:flex-start;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
+          <div style="flex:1;">
+            <div style="font-weight:700;color:var(--color-error);">Transcription failed</div>
+            <div style="font-size:14px;color:var(--color-text-secondary);margin-top:4px;line-height:1.5;">{{ sel.failedLine }}</div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-top:8px;">session.m4a retained · Retry enqueues a fresh job</div>
+            <button onClick="{{ retry }}" style="margin-top:14px;font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:var(--radius-md);border:1px solid var(--color-primary);background:var(--color-primary);color:#fff;cursor:pointer;display:inline-flex;align-items:center;gap:7px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg>
+              Retry transcription
+            </button>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ sel.showTranscribeCTA }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-top:22px;border:1px dashed var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);padding:24px;text-align:center;">
+          <div style="font-family:var(--font-serif);font-weight:700;font-size:20px;margin-bottom:16px;">Audio only</div>
+          <button onClick="{{ openTranscribeModal }}" style="font-family:var(--font-sans);font-size:15px;font-weight:600;padding:11px 22px;border-radius:var(--radius-md);border:none;background:var(--color-primary);color:#fff;cursor:pointer;display:inline-flex;align-items:center;gap:8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4z"></path><path d="M4 14h10v6H4z"></path><path d="M18 14l4 3-4 3z"></path></svg>
+            Transcribe
+          </button>
+          <div style="font-size:13px;color:var(--color-muted);margin-top:14px;line-height:1.5;max-width:470px;margin-left:auto;margin-right:auto;">{{ transcribeSub }}</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ sel.isTranscribing }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-top:22px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);padding:22px 24px;">
+          <div style="display:flex;align-items:center;gap:10px;font-weight:600;">
+            <span style="width:12px;height:12px;border-radius:50%;background:#FFB300;box-shadow:0 0 0 4px rgba(255,179,0,.2);animation:ledpulse 1.8s ease-in-out infinite;"></span>
+            {{ transcribeRunLabel }} <span style="font-family:var(--font-mono);color:var(--color-text-secondary);font-weight:500;">{{ transcribePctLabel }}</span>
+          </div>
+          <div style="height:8px;border-radius:99px;background:var(--color-surface-hover);overflow:hidden;margin-top:14px;border:1px solid var(--color-border);">
+            <div style="{{ transcribeBarStyle }}"></div>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-top:10px;">{{ transcribeFootLabel }}</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ sel.isDiarizing }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-top:22px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);padding:22px 24px;">
+          <div style="display:flex;align-items:center;gap:10px;font-weight:600;">
+            <span style="width:12px;height:12px;border-radius:50%;background:var(--color-secondary);box-shadow:0 0 0 4px rgba(224,169,109,.25);animation:ledpulse 1.4s ease-in-out infinite;"></span>
+            Diarizing… <span style="font-family:var(--font-mono);color:var(--color-text-secondary);font-weight:500;">{{ diarizePctLabel }}</span>
+          </div>
+          <div style="height:8px;border-radius:99px;background:var(--color-surface-hover);overflow:hidden;margin-top:14px;border:1px solid var(--color-border);">
+            <div style="{{ diarizeBarStyle }}"></div>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-top:10px;">One pass over the whole recording · labels stay consistent throughout · replaces transcript.md</div>
+        </div>
+      </sc-if>
+
+      <!-- Transcript panel (single transcript; diarization overwrites it — TD-5) -->
+      <sc-if value="{{ sel.showTranscript }}" hint-placeholder-val="{{ false }}">
+      <section style="margin-top:28px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <h2 style="font-family:var(--font-serif);font-weight:700;font-size:24px;margin:0;">Transcript</h2>
+            <span style="{{ sel.sourceChipStyle }}">{{ sel.sourceLabel }}</span>
+          </div>
+          <div style="display:flex;gap:9px;flex-wrap:wrap;">
+            <sc-if value="{{ sel.showDiarizeBtn }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ diarizeSel }}" style="{{ diarizeBtnStyle }}" title="{{ diarizeBtnTitle }}">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                {{ diarizeBtnLabel }}
+              </button>
+            </sc-if>
+            <sc-if value="{{ sel.showRevertBtn }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ revertLocal }}" style="{{ revertBtnStyle }}" title="Re-transcribe without speaker labels — reversible any time, even after the service is gone">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg>
+                Re-transcribe
+              </button>
+            </sc-if>
+          </div>
+        </div>
+
+        <!-- PLAIN transcript -->
+        <sc-if value="{{ sel.isPlain }}" hint-placeholder-val="{{ true }}">
+          <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:28px 32px;max-width:800px;">
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);border-bottom:1px solid var(--color-border);padding-bottom:14px;margin-bottom:18px;">transcript.md · text only, no speaker labels</div>
+            <sc-for list="{{ sel.transcript }}" as="line" hint-placeholder-count="6">
+              <div style="display:flex;gap:16px;margin-bottom:14px;line-height:1.7;">
+                <span style="font-family:var(--font-mono);font-size:13px;color:var(--color-primary);flex-shrink:0;padding-top:1px;">{{ line.t }}</span>
+                <span style="font-size:16px;color:var(--color-text);">{{ line.text }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <!-- DIARIZED transcript + per-session naming -->
+        <sc-if value="{{ sel.isDiarized }}" hint-placeholder-val="{{ false }}">
+          <div style="display:grid;grid-template-columns:320px 1fr;gap:24px;align-items:start;">
+
+            <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:22px;position:sticky;top:88px;">
+              <div style="font-family:var(--font-serif);font-weight:700;font-size:18px;">Name the speakers</div>
+              <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.55;margin-top:6px;margin-bottom:6px;">Play each detected voice, then type who it is. Names replace the <code style="font-family:var(--font-mono);font-size:.85em;">Speaker N</code> labels throughout this recording.</div>
+              <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-bottom:16px;">{{ sel.namedSummary }}</div>
+
+              <div style="display:flex;flex-direction:column;gap:14px;">
+                <sc-for list="{{ speakerRows }}" as="sp" hint-placeholder-count="2">
+                  <div style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;">
+                    <div style="display:flex;align-items:center;gap:9px;">
+                      <span style="width:22px;height:22px;border-radius:50%;background:{{ sp.color }};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0;">{{ sp.initial }}</span>
+                      <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);flex:1;">{{ sp.label }} · {{ sp.segLabel }}</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
+                      <button onClick="{{ sp.play }}" title="Play a sample of this voice" style="{{ sp.playBtnStyle }}">
+                        <span style="{{ sp.playIconStyle }}"></span>
+                      </button>
+                      <span style="font-family:var(--font-mono);font-size:12px;color:{{ sp.clipColor }};">{{ sp.clipLabel }}</span>
+                    </div>
+                    <input value="{{ sp.name }}" onInput="{{ sp.onName }}" placeholder="Assign a name…" style="margin-top:12px;width:100%;font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 11px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:28px 32px;">
+              <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);border-bottom:1px solid var(--color-border);padding-bottom:14px;margin-bottom:18px;">transcript.md · diarized on the processing service</div>
+              <sc-for list="{{ sel.diarized }}" as="d" hint-placeholder-count="6">
+                <div style="margin-bottom:20px;">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+                    <span style="width:8px;height:8px;border-radius:50%;background:{{ d.color }};"></span>
+                    <span style="font-weight:700;font-size:14px;color:{{ d.color }};">{{ d.speaker }}</span>
+                    <sc-if value="{{ d.unnamed }}" hint-placeholder-val="{{ false }}">
+                      <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-muted);border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;">unnamed</span>
+                    </sc-if>
+                    <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);">{{ d.t }}</span>
+                  </div>
+                  <div style="font-size:16px;color:var(--color-text);line-height:1.7;padding-left:16px;">{{ d.text }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </section>
+      </sc-if>
+    </div>
+    </sc-if>
+
+    <!-- ==================== SETTINGS ==================== -->
+    <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+    <div style="animation:fadeup .3s ease;max-width:720px;">
+      <h1 style="font-family:var(--font-serif);font-weight:700;font-size:32px;margin:0 0 6px;">Settings</h1>
+      <p style="color:var(--color-text-secondary);font-size:15px;line-height:1.6;margin:0 0 28px;">This device records <em>and</em> transcribes on its own — no service, account, or internet needed. An optional <strong>earshot processing service</strong> on your network makes transcription much faster and adds <strong>diarization</strong>, the one thing the Pi can't do alone.</p>
+
+      <section style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:26px 28px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+          <h3 style="font-family:var(--font-serif);font-weight:700;font-size:20px;margin:0;">Processing service</h3>
+          <span style="{{ svcBadgeStyle }}">{{ svcLabel }}</span>
+        </div>
+        <p style="color:var(--color-text-secondary);font-size:14px;line-height:1.6;margin:6px 0 18px;">Stored in <code style="font-family:var(--font-mono);font-size:.85em;">config.toml</code> under <code style="font-family:var(--font-mono);font-size:.85em;">[processing].service_url</code>. Applied without a restart. Leave it empty and everything still works — transcription just runs here.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <input value="{{ serviceDraft }}" onInput="{{ onServiceInput }}" placeholder="{{ serviceUrl }}" style="flex:1;min-width:260px;font-family:var(--font-mono);font-size:14px;padding:11px 14px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
+          <button onClick="{{ saveService }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:11px 20px;border-radius:var(--radius-md);border:none;background:var(--color-primary);color:#fff;cursor:pointer;">Save</button>
+          <sc-if value="{{ serviceConfigured }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ clearService }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:11px 18px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-error);cursor:pointer;">Clear</button>
+          </sc-if>
+        </div>
+        <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-top:14px;">{{ capsLabel }}</div>
+      </section>
+
+      <section style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:26px 28px;margin-top:16px;">
+        <h3 style="font-family:var(--font-serif);font-weight:700;font-size:20px;margin:0 0 16px;">Device</h3>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:12px 24px;font-size:14px;">
+          <span style="color:var(--color-muted);font-family:var(--font-mono);">Web UI</span><span style="font-family:var(--font-mono);">http://earshot.local:8080 · 0.0.0.0:8080</span>
+          <span style="color:var(--color-muted);font-family:var(--font-mono);">Access</span><span>Trusted LAN · no login (v1)</span>
+          <span style="color:var(--color-muted);font-family:var(--font-mono);">Capture</span><span style="font-family:var(--font-mono);">16 kHz · 16-bit · mono (left mic)</span>
+          <span style="color:var(--color-muted);font-family:var(--font-mono);">Stored as</span><span style="font-family:var(--font-mono);">session.m4a · AAC-LC 32 kbps (~0.24 MB/min)</span>
+          <span style="color:var(--color-muted);font-family:var(--font-mono);">Transcribes</span><span style="font-family:var(--font-mono);">{{ routeLabel }}</span>
+          <span style="color:var(--color-muted);font-family:var(--font-mono);">Storage</span><span style="font-family:var(--font-mono);">{{ diskFreeLabel }} · block at 90%</span>
+        </div>
+        <div style="font-size:13px;color:var(--color-muted);margin-top:18px;line-height:1.6;border-top:1px solid var(--color-border);padding-top:16px;">Other settings live in <code style="font-family:var(--font-mono);font-size:.9em;">config.toml</code> and take effect after <code style="font-family:var(--font-mono);font-size:.9em;">sudo systemctl restart earshot</code>.</div>
+      </section>
+    </div>
+    </sc-if>
+
+  </main>
+
+  <footer style="border-top:1px solid var(--color-border);padding:22px 24px;">
+    <div style="max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--color-text-secondary);font-family:var(--font-mono);">
+      <span>earshot · Raspberry Pi 4B + ReSpeaker 2-Mic HAT</span>
+      <span>Local-first capture · v1.0</span>
+    </div>
+  </footer>
+
+  <sc-if value="{{ confirmOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ cancelDelete }}" style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;display:flex;align-items:center;justify-content:center;padding:24px;">
+      <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-xl);padding:28px;max-width:400px;width:100%;box-shadow:var(--shadow-lg);">
+        <h3 style="font-family:var(--font-serif);font-weight:700;font-size:22px;margin:0 0 8px;">Delete session?</h3>
+        <p style="color:var(--color-text-secondary);font-size:14px;line-height:1.6;margin:0 0 22px;">This removes the session directory and everything in it — audio and transcript. Frees disk immediately. This cannot be undone.</p>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button onClick="{{ cancelDelete }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:10px 18px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;">Cancel</button>
+          <button onClick="{{ doDelete }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:10px 18px;border-radius:var(--radius-md);border:none;background:var(--color-error);color:#fff;cursor:pointer;">Delete</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Transcribe options modal -->
+  <sc-if value="{{ transcribeModalOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeTranscribeModal }}" style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;display:flex;align-items:center;justify-content:center;padding:24px;">
+      <div onClick="{{ stop }}" style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-xl);padding:28px;max-width:460px;width:100%;box-shadow:var(--shadow-lg);">
+        <h3 style="font-family:var(--font-serif);font-weight:700;font-size:22px;margin:0 0 6px;">Transcribe this session</h3>
+        <p style="color:var(--color-text-secondary);font-size:14px;line-height:1.6;margin:0 0 20px;">Choose what you need. Diarization needs the processing service; plain transcription does not.</p>
+
+        <button onClick="{{ chooseLocal }}" style="width:100%;text-align:left;display:flex;gap:14px;align-items:flex-start;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:16px 18px;cursor:pointer;color:var(--color-text);" style-hover="border-color:var(--color-primary);background:var(--color-surface-hover);">
+          <span style="width:36px;height:36px;border-radius:50%;background:rgba(var(--color-primary-rgb),.12);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4z"></path><path d="M4 14h10v6H4z"></path><path d="M18 14l4 3-4 3z"></path></svg>
+          </span>
+          <span style="min-width:0;">
+            <span style="display:block;font-family:var(--font-sans);font-weight:700;font-size:15px;">Transcribe</span>
+            <span style="display:block;font-size:13px;color:var(--color-text-secondary);line-height:1.5;margin-top:3px;">Text with timestamps. No speaker labels.</span>
+          </span>
+        </button>
+
+        <button onClick="{{ chooseDiarize }}" style="{{ diarizeChoiceStyle }}" title="{{ diarizeChoiceTitle }}">
+          <span style="width:36px;height:36px;border-radius:50%;background:rgba(155,89,182,.14);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9b59b6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+          </span>
+          <span style="min-width:0;">
+            <span style="display:block;font-family:var(--font-sans);font-weight:700;font-size:15px;">Diarize</span>
+            <span style="display:block;font-size:13px;color:var(--color-text-secondary);line-height:1.5;margin-top:3px;">{{ diarizeChoiceSub }}</span>
+          </span>
+        </button>
+
+        <div style="display:flex;justify-content:flex-end;margin-top:20px;">
+          <button onClick="{{ closeTranscribeModal }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:10px 18px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ toastOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:110;background:var(--color-text);color:var(--color-bg);font-size:14px;font-weight:500;padding:12px 20px;border-radius:var(--radius-pill);box-shadow:var(--shadow-lg);animation:fadeup .25s ease;">{{ toast }}</div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1100,&quot;height&quot;:820}}">
+class Component extends DCLogic {
+  state = {
+    theme: 'light',
+    view: 'list',
+    selectedId: null,
+    device: 'idle',
+    recordElapsed: 0,
+    recordingId: null,
+    playing: false,
+    playPos: 0,
+    transcribingId: null,
+    transcribeProgress: 0,
+    diarizingId: null,
+    diarizeProgress: 0,
+    serviceUrl: 'http://homelab.local:9000',   // '' = processing unavailable, no actions shown
+    serviceDraft: '',
+    serviceStatus: 'ok',                       // 'unset' | 'unreachable' | 'ok'
+    serviceCaps: { transcribe: true, diarize: true },
+    jobRoute: null,                            // 'local' | 'service' for the in-flight job
+    confirmId: null,
+    transcribeModalId: null,
+    toast: null,
+    diskPercent: 46,
+    clipPlaying: null,       // "sessionId::Speaker 1" while a preview clip plays
+    sessions: [
+      // diarized: transcript.md IS the speaker-labelled version (TD-5). The service returns Speaker N,
+      // consistent across the whole recording; the user names them per-session (FR-27).
+      { id: 'rec-000042', name: 'Weekly sync — pricing', recordedAt: '2026-07-17T14:28:01', status: 'diarized', dur: 2583, size: 10.3,
+        transcript: [
+          { t: '00:00', text: "Okay, I think everyone's here now, so let's get going." },
+          { t: '00:06', text: "First thing — the redesign shipped Friday and nothing's on fire yet." },
+          { t: '00:14', text: "Analytics look fine, bounce rate's actually down a couple points." },
+          { t: '00:23', text: "Do we want to keep the old layout behind a flag for a week?" },
+          { t: '00:31', text: "I'd rather not maintain two paths. Let's commit to the new one." },
+          { t: '00:39', text: "Agreed. I'll close out the old templates this afternoon." }
+        ],
+        diarized: [
+          { t: '00:00', speaker: 'Speaker 1', text: "Okay, I think everyone's here now, so let's get going." },
+          { t: '00:06', speaker: 'Speaker 1', text: "First thing — the redesign shipped Friday and nothing's on fire yet." },
+          { t: '00:14', speaker: 'Speaker 2', text: "Analytics look fine, bounce rate's actually down a couple points." },
+          { t: '00:23', speaker: 'Speaker 2', text: "Do we want to keep the old layout behind a flag for a week?" },
+          { t: '00:31', speaker: 'Speaker 1', text: "I'd rather not maintain two paths. Let's commit to the new one." },
+          { t: '00:39', speaker: 'Speaker 2', text: "Agreed. I'll close out the old templates this afternoon." }
+        ],
+        speakerMap: { 'Speaker 1': 'Ritchie', 'Speaker 2': 'Sarah' } },
+      { id: 'rec-000041', name: '1:1 — homelab migration', recordedAt: '2026-07-16T09:15:00', status: 'transcribed', dur: 1685, size: 6.7,
+        transcript: [
+          { t: '00:00', text: "Quick one-on-one, mostly checking in on the homelab migration." },
+          { t: '00:09', text: "The Proxmox move is done, everything's back up except the media box." },
+          { t: '00:18', text: "That one needs a new drive, which I've, of course, over-ordered on." },
+          { t: '00:27', text: "Classic. Anyway, no blockers on your side?" },
+          { t: '00:33', text: "None. I'll ping you if the drive situation changes." }
+        ], diarized: [], speakerMap: {} },
+      { id: 'rec-000040', name: '', recordedAt: '2026-07-15T17:30:12', status: 'pending', dur: 742, size: 3.0, transcript: [], diarized: [], speakerMap: {} },
+      { id: 'rec-000039', name: '', recordedAt: '2026-07-14T20:11:33', status: 'failed', dur: 3061, size: 12.2, transcript: [], diarized: [], speakerMap: {},
+        failedCount: 3, failedError: 'model load failed: unable to allocate memory (base.en, INT8)' },
+      { id: 'rec-000038', name: 'Shelf bracket reminder', recordedAt: '2026-07-12T11:00:45', status: 'transcribed', dur: 372, size: 1.5,
+        transcript: [
+          { t: '00:00', text: "Note to self — pick up the thing from the hardware store." },
+          { t: '00:05', text: "The bracket for the shelf that's been leaning for three weeks." },
+          { t: '00:11', text: "My wife questions most of these life choices. She's not wrong." }
+        ], diarized: [], speakerMap: {} }
+    ]
+  };
+
+  SPEAKER_PALETTE = ['var(--color-primary)','var(--color-accent)','#9b59b6','#27ae60','#1abc9c','#e67e22'];
+
+  componentWillUnmount() { this._clearAll(); }
+  _clearAll() { [this._rec,this._play,this._proc,this._clip].forEach(t=>t&&clearInterval(t)); }
+
+  fmtClock(sec){ sec=Math.max(0,Math.round(sec)); const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;
+    const p=n=>String(n).padStart(2,'0'); return h>0?`${h}:${p(m)}:${p(s)}`:`${m}:${p(s)}`; }
+  fmtDur(sec){ const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;
+    if(h>0)return `${h}h ${m}m`; if(m>0)return `${m}m ${s}s`; return `${s}s`; }
+  // Identity is the allocated id (ADR-0008). The name is an optional label on top of it;
+  // recordedAt is descriptive metadata only — never identity, never a sort key.
+  titleOf(s){ return (s.name||'').trim() || s.id; }
+  fmtRecorded(iso){ if(!iso) return 'Date unknown';
+    const d=new Date(iso); const p=n=>String(n).padStart(2,'0');
+    const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} · ${p(d.getHours())}:${p(d.getMinutes())}`; }
+  identity(s){ const named=!!(s.name||'').trim();
+    return { title:this.titleOf(s),
+             subtitle: named ? `${s.id} · ${this.fmtRecorded(s.recordedAt)}` : this.fmtRecorded(s.recordedAt) }; }
+  nextId(){ const nums=this.state.sessions
+      .map(s=>{ const m=/^rec-(\d+)$/.exec(s.id); return m?parseInt(m[1],10):NaN; })
+      .filter(n=>!isNaN(n));
+    return 'rec-'+String((nums.length?Math.max(...nums):0)+1).padStart(6,'0'); }
+  statusMeta(st){ const m={
+    recording:{label:'Recording',color:'#ef4444'},
+    pending:{label:'Audio only',color:'#c78a3d'},
+    transcribed:{label:'Transcribed',color:'var(--color-primary)'},
+    diarized:{label:'Transcribed with Speakers',color:'#9b59b6'},
+    failed:{label:'Failed',color:'var(--color-error)'} }; return m[st]||m.pending; }
+  badge(st,color){ return `display:inline-flex;align-items:center;font-family:var(--font-sans);font-size:12px;font-weight:600;padding:4px 12px;border-radius:var(--radius-pill);color:#fff;background:${color};white-space:nowrap;`; }
+  soft(color){ const map={'#ef4444':'rgba(239,68,68,.15)','#c78a3d':'rgba(199,138,61,.18)','#9b59b6':'rgba(155,89,182,.15)','var(--color-primary)':'rgba(var(--color-primary-rgb),.15)','var(--color-error)':'rgba(211,47,47,.15)'}; return map[color]||'rgba(0,0,0,.06)'; }
+
+  deviceInfo(){ const d=this.state.device; const m={
+    booting:{label:'Booting',color:'255,255,255',pulse:true},
+    idle:{label:'Ready',color:'34,197,94',pulse:false},
+    recording:{label:'Recording',color:'239,68,68',pulse:true},
+    finalizing:{label:'Finalizing',color:'255,179,0',pulse:true},
+    processing:{label:'Processing',color:'255,179,0',pulse:true},
+    diskfull:{label:'Disk full',color:'255,128,0',pulse:true} }; return m[d]||m.idle; }
+
+  toast(msg){ this.setState({toast:msg}); clearTimeout(this._toast); this._toast=setTimeout(()=>this.setState({toast:null}),2400); }
+
+  go=(v)=>{ this.setState({view:v}); };
+  openSession=(id)=>{ this._stopPlay(); this._stopClip(); this.setState({view:'detail',selectedId:id,playPos:0,playing:false}); };
+
+  toggleRecord=()=>{ if(this.state.device==='recording') this._stopRecording(); else this._startRecording(); };
+  _startRecording(){ if(this.state.device==='finalizing')return;
+    // Whatever holds CPU on the Pi yields to capture: a LOCAL transcription is cancelled,
+    // a service job keeps running on the other machine (specs/processing.md#preemption).
+    if(this.state.transcribingId && this.state.jobRoute==='local'){
+      clearInterval(this._proc); this._proc=null;
+      this.setState(st=>({ sessions:st.sessions.map(s=>s.id===st.transcribingId?{...s,status:'pending'}:s),
+        transcribingId:null, transcribeProgress:0, jobRoute:null }));
+      this.toast('Local transcription preempted · session returned to front of queue'); }
+    const id=this.nextId();
+    const sess={ id, name:'', recordedAt:new Date().toISOString(), status:'recording', dur:0, size:0, transcript:[], diarized:[], speakerMap:{} };
+    this.setState(st=>({ device:'recording', recordingId:id, recordElapsed:0, sessions:[sess,...st.sessions] }));
+    // While recording, the PCM chunks are what sit on disk (~1.9 MB/min). The encode at
+    // finalization replaces them with a ~1/8-size m4a, so the figure drops on stop.
+    this._rec=setInterval(()=>{ this.setState(st=>({ recordElapsed:st.recordElapsed+1,
+      sessions:st.sessions.map(s=>s.id===st.recordingId?{...s,dur:s.dur+1,size:+(s.size+0.0317).toFixed(1)}:s) })); },1000); }
+  _stopRecording(){ clearInterval(this._rec); this._rec=null; const el=this.state.recordElapsed; const rid=this.state.recordingId;
+    if(el<3){ this.setState(st=>({ device:'idle', recordingId:null, recordElapsed:0, sessions:st.sessions.filter(s=>s.id!==rid) }));
+      this.toast('Too short — discarded (min 3s)'); return; }
+    this.setState({device:'finalizing'}); this.toast('Encoding session.m4a…');
+    setTimeout(()=>{ this.setState(st=>({ device:'idle', recordingId:null, recordElapsed:0,
+      sessions:st.sessions.map(s=>s.id===rid?{...s,status:'pending',size:+(s.dur*0.004).toFixed(1)}:s) })); },1700); }
+
+  _svcOn(){ return !!this.state.serviceUrl && this.state.serviceStatus==='ok'; }
+  // Transcription always works — locally if no service is configured (rpi ADR-0010).
+  _route(){ return (this._svcOn() && this.state.serviceCaps.transcribe) ? 'service' : 'local'; }
+  _canDiarize(){ return this._svcOn() && this.state.serviceCaps.diarize; }
+
+  transcribeSel=()=>this._transcribe(this.state.selectedId);
+  openTranscribeModal=()=>{ if(!this._canDiarize()){ this._transcribe(this.state.selectedId); return; } this.setState({transcribeModalId:this.state.selectedId}); };
+  closeTranscribeModal=()=>this.setState({transcribeModalId:null});
+  chooseLocal=()=>{ const id=this.state.transcribeModalId; this.setState({transcribeModalId:null}); this._transcribe(id); };
+  chooseDiarize=()=>{ if(!this._canDiarize()){ this.toast('Diarization unavailable on this service'); this.setState({transcribeModalId:null}); this.go('settings'); return; }
+    this.setState({transcribeModalId:null}); this.diarizeSel(); };
+  transcribeAll=()=>{ const p=this.state.sessions.filter(s=>s.status==='pending'); if(p.length) this._transcribe(p[p.length-1].id); };
+  retry=()=>{ this.setState(st=>({ sessions:st.sessions.map(s=>s.id===st.selectedId?{...s,status:'pending'}:s) })); this._transcribe(this.state.selectedId); };
+  revertLocal=()=>{ const id=this.state.selectedId;
+    this.setState(st=>({ sessions:st.sessions.map(s=>s.id===id?{...s,status:'transcribed',diarized:[],speakerMap:{}}:s) }));
+    this._transcribe(id); this.toast('Re-transcribing on device · diarization removed'); };
+  _transcribe(id){ if(!id||this.state.transcribingId||this.state.diarizingId)return;
+    const route=this._route();
+    this.setState(st=>({ device: st.device==='idle'?'processing':st.device,
+      transcribingId:id, transcribeProgress:0, jobRoute:route }));
+    const step = route==='service' ? 5.0 : 1.6;   // local is markedly slower
+    this._proc=setInterval(()=>{ this.setState(st=>{ const p=st.transcribeProgress+step;
+      if(p>=100){ clearInterval(this._proc); this._proc=null;
+        return { device: st.device==='processing'?'idle':st.device,
+          transcribingId:null, transcribeProgress:0, jobRoute:null,
+          sessions:st.sessions.map(s=>s.id===id?{...s,status:'transcribed',diarized:[],speakerMap:{},transcript:s.transcript.length?s.transcript:this._genTranscript()}:s) }; }
+      return { transcribeProgress:p }; }); },230); }
+  _genTranscript(){ return [
+    { t:'00:00', text:"Recording captured on the device, transcribed on the service." },
+    { t:'00:08', text:"The Pi submitted session.m4a and polled until the job finished." },
+    { t:'00:17', text:"Everything stayed on the local network — no audio left the house." }
+  ]; }
+
+  // diarization overwrites transcript.md with speaker-labelled version; returns generic Speaker N (TD-5)
+  diarizeSel=()=>{ if(!this._canDiarize()){ this.toast('No processing service configured'); this.go('settings'); return; }
+    const id=this.state.selectedId; if(this.state.diarizingId||this.state.transcribingId)return;
+    // Runs on the processing service: may start during a recording, never cancelled by one.
+    this.setState(st=>({ device: st.device==='idle'?'processing':st.device,
+      diarizingId:id, diarizeProgress:0, jobRoute:'service' }));
+    this._proc=setInterval(()=>{ this.setState(st=>{ const p=st.diarizeProgress+3.0;
+      if(p>=100){ clearInterval(this._proc); this._proc=null;
+        return { diarizingId:null, diarizeProgress:0, jobRoute:null,
+          device: st.device==='processing'?'idle':st.device,
+          sessions:st.sessions.map(s=>{ if(s.id!==id)return s;
+            const base=s.transcript.length?s.transcript:this._genTranscript();
+            return {...s,status:'diarized',transcript:base,speakerMap:{},diarized:s.diarized.length?s.diarized:this._genDiar(base)}; }) }; }
+      return { diarizeProgress:p }; }); },210); }
+  _genDiar(tr){ return tr.map((l,i)=>({ t:l.t, speaker:'Speaker '+((i%2)+1), text:l.text })); }
+
+  // per-session speaker naming (offered on diarized transcripts)
+  assignName=(label,val)=>{ const id=this.state.selectedId;
+    this.setState(st=>({ sessions:st.sessions.map(s=>{ if(s.id!==id)return s;
+      const map={...(s.speakerMap||{})}; if(val.trim()) map[label]=val; else delete map[label];
+      return {...s,speakerMap:map}; }) })); };
+  playClip=(label)=>{ const key=this.state.selectedId+'::'+label; this._stopClip(); this.setState({clipPlaying:key});
+    this._clip=setTimeout(()=>this.setState({clipPlaying:null}),2200); };
+  _stopClip(){ clearTimeout(this._clip); this._clip=null; if(this.state.clipPlaying)this.setState({clipPlaying:null}); }
+
+  togglePlay=()=>{ if(this.state.playing) this._stopPlay(); else this._startPlay(); };
+  _startPlay(){ const sel=this._sel(); if(!sel)return; this.setState({playing:true});
+    this._play=setInterval(()=>{ this.setState(st=>{ const total=this._sel()?this._sel().dur:1; const np=st.playPos+ total/60;
+      if(np>=total){ clearInterval(this._play); this._play=null; return {playing:false,playPos:0}; } return {playPos:np}; }); },250); }
+  _stopPlay(){ clearInterval(this._play); this._play=null; this.setState({playing:false}); }
+
+  askDelete=()=>this.setState({confirmId:this.state.selectedId});
+  cancelDelete=()=>this.setState({confirmId:null});
+  doDelete=()=>{ const id=this.state.confirmId; this.setState(st=>({ sessions:st.sessions.filter(s=>s.id!==id), confirmId:null, view:'list', selectedId:null })); this.toast('Session deleted'); };
+
+  // FR-29 — naming is a label on the session; identity (s.id) never changes.
+  renameSel=(e)=>{ const v=e.target.value; const id=this.state.selectedId;
+    this.setState(st=>({ sessions:st.sessions.map(s=>s.id===id?{...s,name:v}:s) })); };
+
+  onServiceInput=(e)=>this.setState({serviceDraft:e.target.value});
+  saveService=()=>{ const u=this.state.serviceDraft.trim();
+    if(!u){ this.toast('Enter a service URL'); return; }
+    this.setState({serviceUrl:u,serviceDraft:'',serviceStatus:'ok',serviceCaps:{transcribe:true,diarize:true}});
+    this.toast('Service connected · transcribe and diarize available'); };
+  clearService=()=>{ this.setState({serviceUrl:'',serviceDraft:'',serviceStatus:'unset',
+    serviceCaps:{transcribe:false,diarize:false}});
+    this.toast('Service cleared · recording only'); };
+  toggleTheme=()=>this.setState(st=>({theme:st.theme==='light'?'dark':'light'}));
+
+  _sel(){ return this.state.sessions.find(s=>s.id===this.state.selectedId); }
+
+  renderVals(){
+    const st=this.state;
+    const dev=this.deviceInfo();
+    const ledDotStyle=`display:inline-block;width:11px;height:11px;border-radius:50%;background:rgb(${dev.color});box-shadow:0 0 8px rgba(${dev.color},.7),0 0 0 3px rgba(${dev.color},.18);${dev.pulse?'animation:ledpulse 1.4s ease-in-out infinite;':''}`;
+    const navStyle=(v)=>({ color: st.view===v?'var(--color-text)':'var(--color-text-secondary)', bg: st.view===v?'var(--color-surface-hover)':'transparent' });
+
+    const sessions=st.sessions.map(s=>{ const meta=this.statusMeta(s.status); const pid=this.identity(s);
+      return { ...s, ...pid, statusLabel:meta.label, color:meta.color, colorSoft:this.soft(meta.color),
+        durationLabel:s.status==='recording'?this.fmtClock(s.dur):this.fmtDur(s.dur),
+        sizeLabel:`${s.size.toFixed(1)} MB`,
+        badgeStyle:this.badge(s.status,meta.color),
+        rowStyle:`display:flex;align-items:center;gap:16px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:16px 20px;cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;`,
+        open:()=>this.openSession(s.id) }; });
+    const pendingCount=st.sessions.filter(s=>s.status==='pending').length;
+    const svcOn=this._svcOn(), canDiarize=this._canDiarize(), route=this._route();
+    const routeLabel = route==='service' ? 'on the processing service' : 'on this device';
+
+    const raw=this._sel(); let sel=null; let speakerRows=[];
+    if(raw){ const meta=this.statusMeta(raw.status); const pid=this.identity(raw);
+      const isTranscribing=st.transcribingId===raw.id, isDiarizing=st.diarizingId===raw.id;
+      const isDiarized=raw.status==='diarized' && (raw.diarized||[]).length>0 && !isDiarizing;
+      const isPlain=raw.status==='transcribed' && !isTranscribing && !isDiarizing;
+      const showTranscript=(isDiarized||isPlain);
+      const map=raw.speakerMap||{};
+      const nameOf=l=>map[l]||l;
+
+      const labels=[]; (raw.diarized||[]).forEach(d=>{ if(!labels.includes(d.speaker))labels.push(d.speaker); });
+      const colorMap={}; labels.forEach((l,i)=>colorMap[l]=this.SPEAKER_PALETTE[i%this.SPEAKER_PALETTE.length]);
+      const namedCount=labels.filter(l=>map[l]).length;
+
+      const sourceChip=(bg)=>`display:inline-flex;align-items:center;font-family:var(--font-sans);font-size:12px;font-weight:600;padding:3px 11px;border-radius:var(--radius-pill);color:#fff;background:${bg};`;
+
+      sel={ ...raw, ...pid, statusLabel:meta.label, badgeStyle:this.badge(raw.status,meta.color),
+        metaLine:`${raw.id} · ${this.fmtRecorded(raw.recordedAt)} · ${this.fmtDur(raw.dur)} · ${raw.size.toFixed(1)} MB · session.m4a`,
+        durationClock:this.fmtClock(raw.dur),
+        isFailed:raw.status==='failed', isTranscribing, isDiarizing, isDiarized, isPlain, showTranscript,
+        showTranscribeCTA:raw.status==='pending' && !isTranscribing && !isDiarizing,
+        failedLine:`${raw.failedError||'unknown error'} — ${raw.failedCount||3} attempts`,
+        transcript:raw.transcript,
+        sourceLabel: isDiarized?'Diarized':'Transcribed',
+        sourceChipStyle: sourceChip(isDiarized?'#9b59b6':'var(--color-primary)'),
+        showDiarizeBtn: isPlain && canDiarize,
+        showRevertBtn: isDiarized,
+        namedSummary: `${namedCount} of ${labels.length} named`,
+        diarized:(raw.diarized||[]).map(d=>({ t:d.t, text:d.text, speaker:nameOf(d.speaker), color:colorMap[d.speaker], unnamed:!map[d.speaker] })) };
+
+      if(isDiarized){ speakerRows=labels.map((label,i)=>{ const segs=raw.diarized.filter(d=>d.speaker===label);
+        const nm=map[label]||''; const playing=st.clipPlaying===(raw.id+'::'+label); const color=colorMap[label];
+        return { label, color, name:nm, initial: nm? nm.trim()[0].toUpperCase() : String(i+1),
+          segLabel: `${segs.length} turn${segs.length===1?'':'s'}`,
+          clipLabel: playing?'Playing sample…':'Voice sample',
+          clipColor: playing?color:'var(--color-text-secondary)',
+          playBtnStyle:`width:34px;height:34px;border-radius:50%;cursor:pointer;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;background:${playing?color:'var(--color-surface-hover)'};border:1px solid var(--color-border);`,
+          playIconStyle: playing?'width:11px;height:11px;background:#fff;border-radius:2px;':`width:0;height:0;border-left:11px solid ${color};border-top:7px solid transparent;border-bottom:7px solid transparent;margin-left:3px;`,
+          play:()=>this.playClip(label), onName:(e)=>this.assignName(label,e.target.value) }; });
+      }
+    }
+
+    const pct = raw && raw.dur ? Math.min(1, st.playPos/raw.dur) : 0;
+    const playBarStyle=`height:100%;width:${(pct*100).toFixed(1)}%;background:var(--color-primary);transition:width .2s linear;`;
+
+    const recording = st.device==='recording';
+    const finalizing = st.device==='finalizing';
+    const recEyebrow = recording?'Recording':(finalizing?'Finalizing':'Recorder');
+    const recHeadline = recording?this.fmtClock(st.recordElapsed):(finalizing?'Encoding…':'Ready to record');
+    const recSub = recording?'Rolling over to a new WAV chunk every 15 minutes. Press stop to encode them into a single session.m4a.'
+      : finalizing?'Chunks are being concatenated and encoded into session.m4a.' : '';
+    const recBtnStyle=`position:absolute;inset:8px;border-radius:50%;border:none;cursor:${finalizing?'default':'pointer'};display:flex;align-items:center;justify-content:center;background:${recording?'#fff':'var(--color-error)'};border:${recording?'2px solid var(--color-error)':'none'};box-shadow:${recording?'none':'0 6px 16px rgba(211,47,47,.35)'};opacity:${finalizing?.5:1};transition:all .2s ease;`;
+    const recIconStyle=recording ? 'width:26px;height:26px;border-radius:5px;background:var(--color-error);' : 'width:30px;height:30px;border-radius:50%;background:#fff;';
+    const recRingStyle= recording ? 'position:absolute;inset:8px;border-radius:50%;background:var(--color-error);animation:recring 1.4s ease-out infinite;' : 'display:none;';
+
+    const diskLabel=`${st.diskPercent}% used`;
+    const diskColor= st.diskPercent>=90?'var(--color-warning)':'var(--color-primary)';
+    const diskBarStyle=`height:100%;width:${st.diskPercent}%;background:${diskColor};transition:width .3s ease;`;
+    const totalGB=59; const freeGB=(totalGB*(1-st.diskPercent/100)).toFixed(1);
+    const diskFreeLabel=`${freeGB} GB free of ${totalGB} GB`;
+
+    const diarizeBtnStyle=`font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:var(--radius-md);cursor:pointer;display:inline-flex;align-items:center;gap:8px;border:1px solid #9b59b6;background:#9b59b6;color:#fff;`;
+
+    const svcColor = svcOn?'var(--color-success)':(st.serviceUrl?'var(--color-error)':'var(--color-muted)');
+    const svcLabel = svcOn?'Connected':(st.serviceUrl?'Unreachable':'Not set — using this device');
+    const svcBadgeStyle=`display:inline-flex;align-items:center;font-family:var(--font-sans);font-size:12px;font-weight:600;padding:3px 11px;border-radius:var(--radius-pill);color:#fff;background:${svcColor};`;
+    const capsLabel = svcOn
+      ? `transcribe ✓ · diarize ${canDiarize?'✓':'✗'}`
+      : (st.serviceUrl
+          ? 'No response — transcription is falling back to this device'
+          : 'Optional. Without one, transcription runs on the Pi and diarization is unavailable.');
+
+    return {
+      theme:st.theme, themeIcon: st.theme==='light'?'🌙':'☀️',
+      deviceLabel: st.device==='recording' ? `Recording · ${this.fmtClock(st.recordElapsed)}` : dev.label,
+      ledDotStyle,
+      navSessions:navStyle('list'), navSettings:navStyle('settings'),
+      isList:st.view==='list', isDetail:st.view==='detail', isSettings:st.view==='settings',
+      goList:()=>this.go('list'), goSettings:()=>this.go('settings'),
+      toggleTheme:this.toggleTheme,
+
+      toggleRecord:this.toggleRecord, recEyebrow, recHeadline, recSub,
+      recBtnStyle, recIconStyle, recRingStyle,
+      diskLabel, diskBarStyle, diskFreeLabel,
+
+      sessions, sessionsCountLabel:`${st.sessions.length} on device · oldest transcribed first`,
+      hasPending:pendingCount>0, isEmpty:st.sessions.length===0,
+      transcribeAll:this.transcribeAll,
+
+      sel, speakerRows,
+      download:()=>this.toast('Downloading session.m4a…'),
+      askDelete:this.askDelete,
+      togglePlay:this.togglePlay,
+      playIconStyle: st.playing?'width:16px;height:16px;background:#fff;border-radius:3px;':'width:0;height:0;border-left:16px solid #fff;border-top:10px solid transparent;border-bottom:10px solid transparent;margin-left:4px;',
+      playPosLabel:this.fmtClock(st.playPos),
+      transcribeSel:this.transcribeSel, retry:this.retry, revertLocal:this.revertLocal,
+      renameSel:this.renameSel,
+      transcribePctLabel:`${Math.round(st.transcribeProgress)}%`,
+      transcribeBarStyle:`height:100%;width:${st.transcribeProgress}%;background:#FFB300;transition:width .2s linear;`,
+      revertBtnStyle:`font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:var(--radius-md);cursor:pointer;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);`,
+      diarizeSel:this.diarizeSel, diarizeBtnStyle,
+      diarizeBtnLabel:'Diarize',
+      diarizeBtnTitle:'Label speakers on the processing service — replaces this transcript',
+      diarizePctLabel:`${Math.round(st.diarizeProgress)}%`,
+      diarizeBarStyle:`height:100%;width:${st.diarizeProgress}%;background:var(--color-secondary);transition:width .2s linear;`,
+      playBarStyle,
+
+      serviceDraft:st.serviceDraft, onServiceInput:this.onServiceInput,
+      saveService:this.saveService, clearService:this.clearService,
+      serviceUrl:st.serviceUrl, serviceConfigured:!!st.serviceUrl,
+      svcBadgeStyle, svcLabel, capsLabel, svcOn, routeLabel,
+      transcribeSub: route==='service'
+        ? 'Runs on your processing service — fast, and stays on your network.'
+        : 'Runs on this device. No service needed; expect roughly 20–35 minutes for a long session.',
+      transcribeRunLabel: route==='service' ? 'Transcribing on the service…' : 'Transcribing on this device…',
+      transcribeFootLabel: route==='service'
+        ? 'On the processing service · recording is unaffected'
+        : 'faster-whisper on the Pi · a new recording cancels this',
+
+      confirmOpen:st.confirmId!==null, cancelDelete:this.cancelDelete, doDelete:this.doDelete,
+    transcribeModalOpen:st.transcribeModalId!==null && st.transcribeModalId!==undefined,
+    openTranscribeModal:this.openTranscribeModal, closeTranscribeModal:this.closeTranscribeModal,
+    chooseLocal:this.chooseLocal, chooseDiarize:this.chooseDiarize, stop:(e)=>e.stopPropagation(),
+    diarizeChoiceStyle:`width:100%;text-align:left;display:flex;gap:14px;align-items:flex-start;margin-top:12px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:16px 18px;cursor:pointer;color:var(--color-text);opacity:${canDiarize?1:.55};`,
+    diarizeChoiceTitle: canDiarize?'Transcribe and label speakers':'This service has no diarization models',
+    diarizeChoiceSub: canDiarize?'Transcribes and labels speakers in one job. You name them afterward.':'Not available on this service.',
+      toastOpen:!!st.toast, toast:st.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

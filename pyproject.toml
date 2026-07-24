@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "earshot-hub"
+version = "0.1.0"
+description = "earshot Raspberry Pi recorder — headless conversation recorder with a LAN web UI"
+requires-python = ">=3.11"
+authors = [{ name = "Ritchie Macapinlac" }]
+dependencies = [
+    "flask>=3.0",
+    "waitress>=3.0",
+    "jsonschema>=4.20",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Local transcription engine. Heavy; installed on the device (or when exercising the
+# real local route). Off-device tests use a fake transcriber instead — see DECISIONS.md.
+transcription = ["faster-whisper>=1.0"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+include = ["earshot*"]
+
+[tool.setuptools.package-data]
+earshot = [
+    "api/openapi.yaml",
+    "api/schemas/*.json",
+    "web/**/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:earshot.*"]

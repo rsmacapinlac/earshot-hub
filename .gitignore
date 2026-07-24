@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+# Local dev data directory when running the stub
+earshot-data/
+*.db
+*.db-wal
+*.db-shm

@@ -1,0 +1,642 @@
+openapi: 3.1.0
+info:
+  title: earshot device API
+  version: "1.0"
+  description: >
+    The device's one interface for operating it (rpi/specs/api.md). The web UI is a
+    client of this API; there is no privileged internal path. OpenAPI 3.1 component
+    schemas are JSON Schema (Draft 2020-12) and are the single source of truth that
+    runtime request/response validation binds to.
+servers:
+  - url: /v1
+
+# ---------------------------------------------------------------------------
+# Conventions (rpi/specs/api.md):
+#   - Times are ISO-8601; durations/positions are seconds (float); sizes are bytes.
+#   - A session is addressed by its rendered id, rec-NNNNNN.
+#   - Errors carry { "error": { "code", "message" } }. Codes stable, messages not.
+#   - Unknown request fields are rejected with 400 rather than ignored.
+#   - No authentication in v1 (trusted LAN).
+# ---------------------------------------------------------------------------
+
+paths:
+  /status:
+    get:
+      operationId: getStatus
+      summary: Live device state — the same thing the LED reflects.
+      responses:
+        "200":
+          description: Current device status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+
+  /events:
+    get:
+      operationId: getEvents
+      summary: Server-Sent Events stream of state and change hints.
+      description: >
+        text/event-stream. On connect, one `state` event carrying the current
+        /status body. `state` re-emits on device-state change; `sessions-changed`
+        and `jobs-changed` are hints to refetch. Not JSON — documented for completeness.
+      responses:
+        "200":
+          description: An SSE stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /sessions:
+    get:
+      operationId: listSessions
+      summary: All sessions, newest id first.
+      responses:
+        "200":
+          description: The session list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionList" }
+
+  /sessions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getSession
+      summary: One session, with its speaker map and current/last job when relevant.
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: patchSession
+      summary: Set or clear the session name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NameUpdate" }
+      responses:
+        "200":
+          description: The updated session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteSession
+      summary: Remove the session and everything in it.
+      responses:
+        "204": { description: Deleted. }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The session is currently recording.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /sessions/{id}/audio:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getSessionAudio
+      summary: The session.m4a, streamed. Supports Range.
+      responses:
+        "200":
+          description: The full audio.
+          content:
+            audio/mp4:
+              schema: { type: string, format: binary }
+        "206":
+          description: A ranged response.
+          content:
+            audio/mp4:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{id}/transcript:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getSessionTranscript
+      summary: The transcript, content-negotiated (text/markdown or application/json).
+      responses:
+        "200":
+          description: The transcript.
+          content:
+            text/markdown:
+              schema: { type: string }
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TranscriptSegment" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{id}/speakers:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getSessionSpeakers
+      summary: The detected labels and any assigned names.
+      responses:
+        "200":
+          description: The speaker list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpeakerList" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{id}/speakers/{label}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/SpeakerLabel"
+    put:
+      operationId: putSpeakerName
+      summary: Assign or clear a speaker's name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NameUpdate" }
+      responses:
+        "200":
+          description: The updated speaker list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpeakerList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /sessions/{id}/speakers/{label}/sample:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - $ref: "#/components/parameters/SpeakerLabel"
+    get:
+      operationId: getSpeakerSample
+      summary: A short audio sample of that voice, drawn from the session.
+      responses:
+        "200":
+          description: The sample.
+          content:
+            audio/mp4:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /recording:
+    post:
+      operationId: startRecording
+      summary: Start a recording (shared with the hardware button).
+      responses:
+        "201":
+          description: The new session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionDetail" }
+        "409":
+          description: A recording is already active, or the disk threshold blocks it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: stopRecording
+      summary: Stop the active recording; it finalizes to session.m4a.
+      responses:
+        "200":
+          description: The finalized session, or a discarded result when too short.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StopRecordingResult" }
+        "409":
+          description: Nothing is recording.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /sessions/{id}/jobs:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: enqueueSessionJob
+      summary: Enqueue a transcribe or diarize job for a session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JobCreate" }
+      responses:
+        "202":
+          description: The created job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            Diarize with no capable service, or a job already queued/running for the session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /jobs:
+    get:
+      operationId: listJobs
+      summary: The queue — queued, running, and recently finished.
+      responses:
+        "200":
+          description: The jobs list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobList" }
+    post:
+      operationId: bulkEnqueueJobs
+      summary: Bulk enqueue (e.g. transcribe all pending, oldest first).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BulkJobCreate" }
+      responses:
+        "202":
+          description: The created jobs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /jobs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      operationId: getJob
+      summary: One job.
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: cancelJob
+      summary: Cancel a job (drop if queued, terminate if running local, abandon if service).
+      responses:
+        "204": { description: Cancelled. }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /service:
+    get:
+      operationId: getService
+      summary: The processing-service connection status.
+      responses:
+        "200":
+          description: The service status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Service" }
+    put:
+      operationId: putService
+      summary: Set the processing-service URL. Applies immediately.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceUpdate" }
+      responses:
+        "200":
+          description: The refreshed service status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Service" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    delete:
+      operationId: clearService
+      summary: Clear the service URL — transcription falls back to local.
+      responses:
+        "204": { description: Cleared. }
+
+components:
+  parameters:
+    SessionId:
+      name: id
+      in: path
+      required: true
+      description: Rendered session id, rec-NNNNNN.
+      schema: { $ref: "#/components/schemas/SessionIdString" }
+    SpeakerLabel:
+      name: label
+      in: path
+      required: true
+      description: Speaker label, e.g. "Speaker 1" (URL-encoded).
+      schema: { type: string }
+    JobId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
+
+  responses:
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Malformed body or unknown fields.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+
+    SessionIdString:
+      type: string
+      pattern: "^rec-[0-9]{6,}$"
+      examples: ["rec-000042"]
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+
+    # ---- Device status -----------------------------------------------------
+
+    DeviceState:
+      type: string
+      enum: [booting, idle, recording, finalizing, processing, disk_full]
+
+    LedPattern:
+      type: string
+      enum: [solid, slow_pulse, very_slow_pulse, double_flash, fade_to_off]
+
+    Led:
+      type: object
+      additionalProperties: false
+      required: [rgb, pattern]
+      properties:
+        rgb:
+          type: array
+          items: { type: integer, minimum: 0, maximum: 255 }
+          minItems: 3
+          maxItems: 3
+        pattern: { $ref: "#/components/schemas/LedPattern" }
+
+    RecordingStatus:
+      type: [object, "null"]
+      additionalProperties: false
+      required: [session_id, elapsed]
+      properties:
+        session_id: { $ref: "#/components/schemas/SessionIdString" }
+        elapsed:
+          type: number
+          description: Seconds since recording started.
+
+    ProcessingStatus:
+      type: [object, "null"]
+      additionalProperties: false
+      required: [session_id, kind, route, stage]
+      properties:
+        session_id: { $ref: "#/components/schemas/SessionIdString" }
+        kind: { $ref: "#/components/schemas/JobKind" }
+        route: { $ref: "#/components/schemas/JobRoute" }
+        stage: { type: string }
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Omitted for stages that cannot be honestly measured.
+
+    Disk:
+      type: object
+      additionalProperties: false
+      required: [used_percent, blocked]
+      properties:
+        used_percent: { type: number, minimum: 0, maximum: 100 }
+        blocked: { type: boolean }
+
+    Status:
+      type: object
+      additionalProperties: false
+      required: [state, led, recording, processing, disk]
+      properties:
+        state: { $ref: "#/components/schemas/DeviceState" }
+        led: { $ref: "#/components/schemas/Led" }
+        recording: { $ref: "#/components/schemas/RecordingStatus" }
+        processing: { $ref: "#/components/schemas/ProcessingStatus" }
+        disk: { $ref: "#/components/schemas/Disk" }
+
+    # ---- Sessions ----------------------------------------------------------
+
+    SessionState:
+      type: string
+      enum: [recording, pending, transcribed, diarized, failed]
+
+    Session:
+      type: object
+      additionalProperties: false
+      required: [id, name, state, created_at, duration, size, has_transcript, diarized]
+      properties:
+        id: { $ref: "#/components/schemas/SessionIdString" }
+        name:
+          type: [string, "null"]
+        state: { $ref: "#/components/schemas/SessionState" }
+        created_at: { type: string }
+        duration:
+          type: [number, "null"]
+          description: session.m4a duration in seconds; null until finalized.
+        size:
+          type: [integer, "null"]
+          description: session.m4a size in bytes; null until finalized.
+        has_transcript: { type: boolean }
+        diarized: { type: boolean }
+
+    SessionDetail:
+      allOf:
+        - { $ref: "#/components/schemas/Session" }
+        - type: object
+          additionalProperties: false
+          required: [id, name, state, created_at, duration, size, has_transcript, diarized, speakers, job]
+          properties:
+            id: { $ref: "#/components/schemas/SessionIdString" }
+            name: { type: [string, "null"] }
+            state: { $ref: "#/components/schemas/SessionState" }
+            created_at: { type: string }
+            duration: { type: [number, "null"] }
+            size: { type: [integer, "null"] }
+            has_transcript: { type: boolean }
+            diarized: { type: boolean }
+            speakers:
+              type: array
+              items: { $ref: "#/components/schemas/Speaker" }
+            job:
+              oneOf:
+                - { $ref: "#/components/schemas/Job" }
+                - { type: "null" }
+              description: The current or most recent job for this session, when relevant.
+
+    SessionList:
+      type: object
+      additionalProperties: false
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items: { $ref: "#/components/schemas/Session" }
+
+    NameUpdate:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: [string, "null"]
+
+    StopRecordingResult:
+      oneOf:
+        - { $ref: "#/components/schemas/SessionDetail" }
+        - type: object
+          additionalProperties: false
+          required: [discarded, reason]
+          properties:
+            discarded: { const: true }
+            reason: { type: string, enum: [too_short] }
+
+    # ---- Transcript & speakers --------------------------------------------
+
+    TranscriptSegment:
+      type: object
+      additionalProperties: false
+      required: [start, end, text]
+      properties:
+        start: { type: number }
+        end: { type: number }
+        text: { type: string }
+        speaker:
+          type: string
+          description: Present only when the session is diarized.
+
+    Speaker:
+      type: object
+      additionalProperties: false
+      required: [label, name, segments]
+      properties:
+        label: { type: string, examples: ["Speaker 1"] }
+        name: { type: [string, "null"] }
+        segments: { type: integer, minimum: 0 }
+
+    SpeakerList:
+      type: object
+      additionalProperties: false
+      required: [speakers]
+      properties:
+        speakers:
+          type: array
+          items: { $ref: "#/components/schemas/Speaker" }
+
+    # ---- Jobs --------------------------------------------------------------
+
+    JobKind:
+      type: string
+      enum: [transcribe, diarize]
+
+    JobRoute:
+      type: string
+      enum: [local, service]
+
+    JobState:
+      type: string
+      enum: [queued, running, done, failed, cancelled]
+
+    Job:
+      type: object
+      additionalProperties: false
+      required: [id, session_id, kind, state, attempts, enqueued_at]
+      properties:
+        id: { type: integer }
+        session_id: { $ref: "#/components/schemas/SessionIdString" }
+        kind: { $ref: "#/components/schemas/JobKind" }
+        route:
+          oneOf:
+            - { $ref: "#/components/schemas/JobRoute" }
+            - { type: "null" }
+          description: Decided at job start (dequeue); null while still queued.
+        state: { $ref: "#/components/schemas/JobState" }
+        stage: { type: [string, "null"] }
+        progress:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        attempts: { type: integer, minimum: 0 }
+        last_error: { type: [string, "null"] }
+        enqueued_at: { type: string }
+        started_at: { type: [string, "null"] }
+        finished_at: { type: [string, "null"] }
+
+    JobList:
+      type: object
+      additionalProperties: false
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items: { $ref: "#/components/schemas/Job" }
+
+    JobCreate:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { $ref: "#/components/schemas/JobKind" }
+
+    BulkJobCreate:
+      type: object
+      additionalProperties: false
+      required: [kind, target]
+      properties:
+        kind: { $ref: "#/components/schemas/JobKind" }
+        target:
+          type: string
+          enum: [pending]
+          description: Which sessions to enqueue. "pending" = every pending session.
+
+    # ---- Processing service ------------------------------------------------
+
+    ServiceCapabilities:
+      type: object
+      additionalProperties: false
+      required: [transcribe, diarize]
+      properties:
+        transcribe: { type: boolean }
+        diarize: { type: boolean }
+
+    Service:
+      type: object
+      additionalProperties: false
+      required: [configured, url, reachable]
+      properties:
+        configured: { type: boolean }
+        url: { type: [string, "null"] }
+        reachable: { type: boolean }
+        capabilities:
+          oneOf:
+            - { $ref: "#/components/schemas/ServiceCapabilities" }
+            - { type: "null" }
+          description: From the service's health endpoint; null when unreachable/unset.
+
+    ServiceUpdate:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url: { type: string }
