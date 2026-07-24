@@ -46,6 +46,17 @@ The spec always wins where it speaks. Nothing here overrides `rpi/specs/`.
 - **Frontend: vanilla HTML/CSS/JS, no build step.** Minimal deps for a Pi appliance; served
   statically by the app and bound to the `/v1` API + SSE.
 
+- **HAL backend selection.** `hardware.hat = "respeaker"` selects the real `pi` backend;
+  `hardware.hat = "stub"` (a value the spec doesn't enumerate but the HAL ADR's two-backend
+  model implies) selects the stub. `EARSHOT_HAL=stub` overrides config so off-device dev runs
+  `EARSHOT_HAL=stub python -m earshot` without editing config. The real backend never silently
+  falls back to the stub — on a device, missing hardware must fail loudly. Pi hardware deps
+  (`gpiozero`, `spidev`, `arecord`) are imported lazily so `earshot.hal.pi` imports off-device.
+
+- **Dev data dir / config overrides.** `EARSHOT_DATA_DIR` overrides `[storage].data_dir` and
+  `EARSHOT_CONFIG` overrides the config path, so off-device runs and tests use a scratch
+  directory without touching `~/earshot-data`.
+
 - **Timestamps.** ISO-8601 local wall-clock via `datetime.now().isoformat()` (microsecond
   precision), matching the `status.json` example in `storage.md`. Descriptive only — nothing
   reads them back for identity or ordering (clock-independence).

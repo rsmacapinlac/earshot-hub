@@ -1,0 +1,208 @@
+"""`config.toml` schema, defaults, and loading (rpi/specs/configuration.md).
+
+All keys have defaults; omitting a key uses the default. The file lives in the
+**data directory** (``~/earshot-data/config.toml`` by default), not the install
+directory. Full validation with clear errors is hardened in the config milestone;
+this module already loads, type-checks, and applies defaults.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from dataclasses import dataclass, field, fields, is_dataclass
+from pathlib import Path
+from typing import Any
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - project targets 3.11+
+    import tomli as tomllib
+
+DEFAULT_DATA_DIR = "~/earshot-data"
+
+
+class ConfigError(ValueError):
+    """Raised when config.toml cannot be parsed or fails validation."""
+
+
+@dataclass
+class HardwareConfig:
+    hat: str = "respeaker"
+
+
+@dataclass
+class AudioConfig:
+    sample_rate: int = 16000
+    channels: int = 1
+    bit_depth: int = 16
+    alsa_pcm: str = "plughw:CARD=seeed2micvoicec,DEV=0"
+
+
+@dataclass
+class RecordingConfig:
+    chunk_duration_seconds: int = 900
+    min_duration_seconds: int = 3
+    encode_bitrate_kbps: int = 32
+    shutdown_hold_seconds: int = 3
+
+
+@dataclass
+class StorageConfig:
+    data_dir: str = DEFAULT_DATA_DIR
+    disk_threshold_percent: int = 90
+
+
+@dataclass
+class TranscriptionConfig:
+    enabled: bool = True
+    model: str = "base.en"
+    threads: int = 2
+
+
+@dataclass
+class ProcessingConfig:
+    service_url: str = ""
+    poll_interval_seconds: int = 5
+    max_failures: int = 3
+
+
+@dataclass
+class WebConfig:
+    enabled: bool = True
+    bind_address: str = "0.0.0.0"
+    port: int = 8080
+
+
+@dataclass
+class Config:
+    hardware: HardwareConfig = field(default_factory=HardwareConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
+    recording: RecordingConfig = field(default_factory=RecordingConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
+    transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
+    processing: ProcessingConfig = field(default_factory=ProcessingConfig)
+    web: WebConfig = field(default_factory=WebConfig)
+    # Where this config was loaded from (None if all-defaults).
+    source_path: Path | None = None
+
+    # -- Derived paths ----------------------------------------------------- #
+
+    @property
+    def data_dir(self) -> Path:
+        """Absolute, user-expanded data directory."""
+        env = os.environ.get("EARSHOT_DATA_DIR")
+        raw = env if env else self.storage.data_dir
+        return Path(raw).expanduser().resolve()
+
+    @property
+    def recordings_dir(self) -> Path:
+        return self.data_dir / "recordings"
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "earshot.db"
+
+    # -- Loading ----------------------------------------------------------- #
+
+    @classmethod
+    def default_path(cls) -> Path:
+        env = os.environ.get("EARSHOT_CONFIG")
+        if env:
+            return Path(env).expanduser()
+        data_dir = os.environ.get("EARSHOT_DATA_DIR", DEFAULT_DATA_DIR)
+        return Path(data_dir).expanduser() / "config.toml"
+
+    @classmethod
+    def load(cls, path: str | os.PathLike[str] | None = None) -> "Config":
+        """Load config from *path* (or the default), applying defaults.
+
+        A missing file is not an error — the device runs on all-defaults, which is
+        a fully supported configuration.
+        """
+        config_path = Path(path) if path is not None else cls.default_path()
+        if not config_path.exists():
+            cfg = cls()
+            cfg.source_path = None
+            return cfg
+        try:
+            with config_path.open("rb") as fh:
+                raw = tomllib.load(fh)
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise ConfigError(f"cannot read {config_path}: {exc}") from exc
+        cfg = cls.from_dict(raw)
+        cfg.source_path = config_path
+        return cfg
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "Config":
+        sections = {
+            "hardware": HardwareConfig,
+            "audio": AudioConfig,
+            "recording": RecordingConfig,
+            "storage": StorageConfig,
+            "transcription": TranscriptionConfig,
+            "processing": ProcessingConfig,
+            "web": WebConfig,
+        }
+        kwargs: dict[str, Any] = {}
+        for name, section_cls in sections.items():
+            kwargs[name] = _build_section(name, section_cls, raw.get(name, {}))
+        cfg = cls(**kwargs)
+        cfg.validate()
+        return cfg
+
+    # -- Validation -------------------------------------------------------- #
+
+    def validate(self) -> None:
+        r = self.recording
+        if r.min_duration_seconds < 0:
+            raise ConfigError("recording.min_duration_seconds must be >= 0")
+        if r.chunk_duration_seconds <= 0:
+            raise ConfigError("recording.chunk_duration_seconds must be > 0")
+        if r.encode_bitrate_kbps <= 0:
+            raise ConfigError("recording.encode_bitrate_kbps must be > 0")
+        if self.audio.channels != 1:
+            # Mono, left mic only (recording.md). Guard rather than silently mis-capture.
+            raise ConfigError("audio.channels must be 1 (mono, left mic)")
+        if not (0 < self.storage.disk_threshold_percent <= 100):
+            raise ConfigError("storage.disk_threshold_percent must be in (0, 100]")
+        if not (0 < self.web.port < 65536):
+            raise ConfigError("web.port must be in (0, 65535]")
+        if self.processing.max_failures < 0:
+            raise ConfigError("processing.max_failures must be >= 0")
+
+
+def _build_section(name: str, section_cls: type, values: Any):
+    if not isinstance(values, dict):
+        raise ConfigError(f"[{name}] must be a table")
+    known = {f.name: f for f in fields(section_cls)}
+    kwargs: dict[str, Any] = {}
+    for key, value in values.items():
+        if key not in known:
+            raise ConfigError(f"unknown key [{name}].{key}")
+        expected = known[key].type
+        kwargs[key] = _coerce(name, key, value, expected)
+    return section_cls(**kwargs)
+
+
+def _coerce(section: str, key: str, value: Any, expected: Any):
+    # dataclass field types are strings under `from __future__ import annotations`.
+    type_name = expected if isinstance(expected, str) else getattr(expected, "__name__", str(expected))
+    if type_name == "bool":
+        if not isinstance(value, bool):
+            raise ConfigError(f"[{section}].{key} must be a boolean")
+        return value
+    if type_name == "int":
+        # A TOML bool is an int subclass; reject it explicitly.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ConfigError(f"[{section}].{key} must be an integer")
+        return value
+    if type_name == "str":
+        if not isinstance(value, str):
+            raise ConfigError(f"[{section}].{key} must be a string")
+        return value
+    return value
+
+
+assert is_dataclass(Config)
