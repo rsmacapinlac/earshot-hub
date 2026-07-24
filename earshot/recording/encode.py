@@ -39,14 +39,14 @@ def encode_session(
         list_path = Path(lf.name)
 
     cmd = [
-        ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+        ffmpeg, "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
         "-f", "concat", "-safe", "0", "-i", str(list_path),
         "-c:a", "aac", "-b:a", f"{bitrate_kbps}k", "-ac", "1",
         "-movflags", "+faststart",
         str(out_path),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     finally:
         list_path.unlink(missing_ok=True)
 
@@ -64,13 +64,13 @@ def cut_sample(
     with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tf:
         out = Path(tf.name)
     cmd = [
-        ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+        ffmpeg, "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
         "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(src),
         "-c:a", "aac", "-b:a", f"{bitrate_kbps}k", "-ac", "1",
         "-movflags", "+faststart", str(out),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
         if proc.returncode != 0:
             raise EncodeError(f"ffmpeg sample failed ({proc.returncode}): {proc.stderr.strip()}")
         return out.read_bytes()
@@ -86,7 +86,7 @@ def probe_duration(path: Path, *, ffprobe: str = "ffprobe") -> float:
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if proc.returncode != 0:
         raise EncodeError(f"ffprobe failed ({proc.returncode}): {proc.stderr.strip()}")
     try:
