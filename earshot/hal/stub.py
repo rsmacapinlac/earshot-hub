@@ -58,6 +58,12 @@ class StubLED:
     def __init__(self) -> None:
         self._current: LedState | None = None
         self.history: list[LedState] = []
+        self.started = False
+
+    def start(self) -> None:
+        # No hardware to open; mirror the interface so the control loop can start
+        # every backend uniformly (the pi LED opens SPI + its animator here).
+        self.started = True
 
     def set(self, state: LedState) -> None:
         if state == self._current:

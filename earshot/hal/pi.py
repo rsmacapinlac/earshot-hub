@@ -66,25 +66,29 @@ class PiButton:
 
 
 class PiLED:
-    """APA102 LED chain over SPI, with a background pattern animator.
+    """First APA102 on the ReSpeaker HAT, animated per :class:`LedState` pattern.
 
-    Only LED index 0 is driven in v1 (full RGB + patterns); the chain is 3 long.
+    Driven through the ``apa102_pi`` library — the approach proven on this HAT —
+    rather than hand-rolled SPI framing. Only pixel 0 shows colour; the other two
+    of the 3-LED chain are cleared. ``start()`` opens SPI and launches the animator.
     """
 
-    def __init__(self, brightness: float = 0.4) -> None:
-        self._brightness = brightness
-        self._spi = None
+    def __init__(self, global_brightness: int = 10) -> None:
+        self._global_brightness = global_brightness
+        self._strip = None
         self._current: LedState | None = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        import spidev  # on-device dependency
+        from apa102_pi.driver import apa102  # on-device dependency
 
-        self._spi = spidev.SpiDev()
-        self._spi.open(0, 0)
-        self._spi.max_speed_hz = 8_000_000
+        self._strip = apa102.APA102(
+            num_led=LED_COUNT, order="rgb", bus_method="spi", spi_bus=0,
+            global_brightness=self._global_brightness,
+        )
+        self._strip.clear_strip()
         self._stop.clear()
         self._thread = threading.Thread(target=self._animate, name="earshot-led", daemon=True)
         self._thread.start()
@@ -101,10 +105,13 @@ class PiLED:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=2)
-        if self._spi is not None:
-            self._write_rgb((0, 0, 0))
-            self._spi.close()
-            self._spi = None
+        if self._strip is not None:
+            self._render(0, 0, 0)
+            try:
+                self._strip.cleanup()
+            except OSError as exc:  # pragma: no cover - on-device
+                log.debug("APA102 cleanup: %s", exc)
+            self._strip = None
 
     # -- animation --------------------------------------------------------- #
 
@@ -114,12 +121,12 @@ class PiLED:
             with self._lock:
                 state = self._current
             if state is None:
-                self._write_rgb((0, 0, 0))
+                self._render(0, 0, 0)
                 time.sleep(0.05)
                 continue
             level = self._level_for(state.pattern, phase)
             r, g, b = state.rgb
-            self._write_rgb((int(r * level), int(g * level), int(b * level)))
+            self._render(int(r * level), int(g * level), int(b * level))
             phase += 0.05
             time.sleep(0.05)
 
@@ -140,15 +147,12 @@ class PiLED:
             return max(0.0, 1.0 - phase / 2.0)
         return 1.0
 
-    def _write_rgb(self, rgb: tuple[int, int, int]) -> None:
-        if self._spi is None:
+    def _render(self, r: int, g: int, b: int) -> None:
+        if self._strip is None:
             return
-        r, g, b = rgb
-        bright = 0b11100000 | int(self._brightness * 31)
-        led0 = [bright, b, g, r]
-        off = [0b11100000, 0, 0, 0]
-        frame = [0, 0, 0, 0] + led0 + off * (LED_COUNT - 1) + [0xFF, 0xFF, 0xFF, 0xFF]
-        self._spi.xfer2(frame)
+        for i in range(LED_COUNT):
+            self._strip.set_pixel(i, r, g, b) if i == 0 else self._strip.set_pixel(i, 0, 0, 0)
+        self._strip.show()
 
 
 class PiAudioCapture:

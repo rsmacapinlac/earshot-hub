@@ -161,9 +161,9 @@ say "Creating the Python venv and installing earshot"
 python3 -m venv --system-site-packages "$VENV"
 "$VENV/bin/pip" install --upgrade pip
 if [[ "$WITH_TRANSCRIPTION" == 1 ]]; then
-  "$VENV/bin/pip" install -e "$INSTALL_DIR[transcription]"
+  "$VENV/bin/pip" install -e "$INSTALL_DIR[pi,transcription]"
 else
-  "$VENV/bin/pip" install -e "$INSTALL_DIR"
+  "$VENV/bin/pip" install -e "$INSTALL_DIR[pi]"
 fi
 chown -R "$INSTALL_USER":"$INSTALL_USER" "$VENV"
 

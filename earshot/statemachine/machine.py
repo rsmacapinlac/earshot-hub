@@ -105,6 +105,7 @@ class Controller:
     # -- lifecycle --------------------------------------------------------- #
 
     def start(self) -> None:
+        self.hal.led.start()  # pi backend opens SPI + its animator; stub is a no-op
         self.hal.led.set(led_state_for(State.BOOTING.value))
         self.hal.button.start()
         self._thread.start()

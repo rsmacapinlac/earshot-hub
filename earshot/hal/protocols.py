@@ -48,6 +48,10 @@ class ButtonInterface(Protocol):
 class LEDInterface(Protocol):
     """Colour and pattern — the device's sole local feedback channel."""
 
+    def start(self) -> None:
+        """Acquire the LED device and begin driving it. The pi backend opens SPI
+        and starts its animator here; the control loop calls this at startup."""
+
     def set(self, state: LedState) -> None:
         """Display *state* (rgb + pattern). Idempotent for the same state."""
 

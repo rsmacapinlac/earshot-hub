@@ -24,6 +24,14 @@ def _wait_state(client, target, timeout=3.0):
     return client.get("/v1/status").get_json()["state"]
 
 
+def test_led_backend_is_started(app):
+    # The control loop must start() the LED backend, or the real APA102 LED never
+    # initialises — it opens SPI + its animator in start(). Regression: LEDInterface
+    # had no start() and Controller.start() never called it, so the pi LED stayed dark
+    # while every stub test passed.
+    assert app.hal.led.started is True
+
+
 def test_boots_to_idle(client):
     resp = client.get("/v1/status")
     assert resp.status_code == 200
