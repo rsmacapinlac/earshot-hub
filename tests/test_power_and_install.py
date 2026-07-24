@@ -41,7 +41,7 @@ def test_installer_config_toml_parses_to_defaults(tmp_path, monkeypatch):
     cfg_path.write_text(
         '[hardware]\nhat = "respeaker"\n\n'
         "[audio]\nsample_rate = 16000\nchannels = 1\nbit_depth = 16\n"
-        'alsa_pcm = "plughw:CARD=seeed2micvoicec,DEV=0"\n\n'
+        'alsa_pcm = "plughw:CARD=wm8960soundcard,DEV=0"\n\n'
         "[recording]\nchunk_duration_seconds = 900\nmin_duration_seconds = 3\n"
         "encode_bitrate_kbps = 32\nshutdown_hold_seconds = 3\n\n"
         '[storage]\ndata_dir = "~/earshot-data"\ndisk_threshold_percent = 90\n\n'
@@ -52,7 +52,7 @@ def test_installer_config_toml_parses_to_defaults(tmp_path, monkeypatch):
     )
     c = Config.load(cfg_path)
     assert c.hardware.hat == "respeaker"
-    assert c.audio.alsa_pcm == "plughw:CARD=seeed2micvoicec,DEV=0"
+    assert c.audio.alsa_pcm == "plughw:CARD=wm8960soundcard,DEV=0"
     assert c.recording.encode_bitrate_kbps == 32 and c.recording.shutdown_hold_seconds == 3
     assert c.transcription.model == "base.en"
     assert c.processing.max_failures == 3 and c.web.port == 8080
@@ -62,6 +62,17 @@ def test_installer_scripts_have_valid_syntax():
     for script in ("installer/install.sh", "installer/apply-alc.sh"):
         r = subprocess.run(["bash", "-n", str(REPO / script)], capture_output=True, text=True)
         assert r.returncode == 0, f"{script}: {r.stderr}"
+
+
+def test_installer_uses_wm8960_overlay_not_dkms():
+    """Audio comes from the in-tree WM8960 codec + the wm8960-soundcard overlay,
+    not the out-of-tree seeed-voicecard DKMS driver (which won't build on kernel 6.x)."""
+    install = (REPO / "installer" / "install.sh").read_text()
+    alc = (REPO / "installer" / "apply-alc.sh").read_text()
+    assert "dtoverlay=wm8960-soundcard" in install
+    assert "seeed-voicecard.git" not in install          # no out-of-tree build
+    assert "card=wm8960soundcard" in alc
+    assert "Input Boost Mixer" in alc                     # enables the muted input path
 
 
 def test_installer_renders_hardened_unit_fields():

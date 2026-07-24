@@ -10,36 +10,42 @@ Prereqs: install complete, rebooted, `sudo systemctl status earshot` shows
 
 ---
 
-## 1. Audio driver initialisation (reboot-dependent)
+## 1. Audio card initialisation (reboot-dependent)
 
-The seeed-voicecard driver only appears in ALSA after a reboot.
+The WM8960 codec is driven by the in-tree kernel driver + the RPi `wm8960-soundcard`
+overlay (the out-of-tree seeed-voicecard DKMS driver does **not** build on modern
+kernels — 6.x+). The card only appears in ALSA after a reboot.
 
 ```sh
-arecord -l                     # expect a card named 'seeed2micvoicec'
-cat /proc/asound/seeed2micvoicec/pcm0c/info   # capture PCM present
+arecord -l                        # expect a card named 'wm8960soundcard'
+dmesg | grep -i wm8960            # 'wm8960 1-001a' codec bound at I2C 0x1a
 ```
 
-- [ ] `seeed2micvoicec` is listed.
-- [ ] `dmesg | grep -i seeed` shows the module bound (kernel taint from the
-      out-of-tree module is expected).
+- [ ] `wm8960soundcard` is listed.
+- [ ] `/boot/firmware/config.txt` has `dtoverlay=wm8960-soundcard` (+ `dtparam=i2s=on`,
+      `i2c_arm=on`, `spi=on`).
 
 ## 2. WM8960 ALC capture front-end
 
-`earshot-alc.service` applies the speech preset on boot.
+`earshot-alc.service` enables the mic input path (the generic overlay leaves it
+muted) and applies the speech preset on boot.
 
 ```sh
-systemctl status earshot-alc.service          # active (exited)
-amixer -c seeed2micvoicec sget 'ALC Function'  # -> Left
-amixer -c seeed2micvoicec sget 'ALC Max Gain'  # -> 5 (v1 value)
+systemctl status earshot-alc.service              # active (exited)
+amixer -c wm8960soundcard sget 'ALC Function'     # -> Left
+amixer -c wm8960soundcard sget 'ALC Max Gain'     # -> 5 (v1 value)
+amixer -c wm8960soundcard sget 'Left Input Boost Mixer LINPUT1'  # non-zero (mic path)
 ```
 
 - [ ] `ALC Function = Left`, `ALC Target = 7`, `ALC Max Gain = 5`, `Noise Gate = on`.
-- [ ] Settings survive a reboot (persisted to `/etc/voicecard/wm8960_asound.state`).
+- [ ] The `Input Boost Mixer` gains are non-zero (else capture is silent).
+- [ ] Settings survive a reboot (persisted via `alsactl store` → restored by
+      `alsa-restore` and re-applied by `earshot-alc.service`).
 
-## 3. Live capture (WM8960, left mic, 16 kHz mono)
+## 3. Live capture (WM8960, 16 kHz mono)
 
 ```sh
-arecord -D plughw:CARD=seeed2micvoicec,DEV=0 -f S16_LE -r 16000 -c 1 -d 5 /tmp/mic.wav
+arecord -D plughw:CARD=wm8960soundcard,DEV=0 -f S16_LE -r 16000 -c 1 -d 5 /tmp/mic.wav
 aplay /tmp/mic.wav             # or copy off-device to listen
 ```
 

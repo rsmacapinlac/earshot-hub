@@ -7,8 +7,8 @@
 #   git clone https://github.com/rsmacapinlac/earshot-hub.git ~/earshot-hub
 #   bash ~/earshot-hub/installer/install.sh
 #
-# A reboot is required at the end — the seeed-voicecard driver only appears in
-# ALSA after reboot.
+# A reboot is required at the end — the WM8960 sound card only appears in ALSA
+# after the wm8960-soundcard overlay loads at boot.
 #
 # Flags:
 #   --no-transcription   Skip faster-whisper + model download (service-only device).
@@ -78,7 +78,7 @@ hat = "$HAT"
 sample_rate = 16000
 channels = 1
 bit_depth = 16
-alsa_pcm = "plughw:CARD=seeed2micvoicec,DEV=0"
+alsa_pcm = "plughw:CARD=wm8960soundcard,DEV=0"
 
 [recording]
 chunk_duration_seconds = 900
@@ -126,24 +126,11 @@ for pkg in python3-gpiozero python3-spidev python3-lgpio libgpiod3 gpiod; do
   sudo apt-get install -y "$pkg" || echo "  (optional) could not install $pkg — verify for the pi backend"
 done
 
-# ---- ReSpeaker (seeed-voicecard) driver -----------------------------------
-if [[ "$SKIP_AUDIO_DRIVER" == 1 ]]; then
-  say "Skipping the ReSpeaker driver (--no-audio-driver) — capture will not work until it is installed"
-elif arecord -l 2>/dev/null | grep -q seeed2micvoicec; then
-  say "seeed2micvoicec already present — skipping driver build"
-else
-  say "Installing the ReSpeaker (seeed-voicecard) audio driver"
-  SEEED_SRC="$INSTALL_HOME/seeed-voicecard"
-  if [[ ! -d "$SEEED_SRC" ]]; then
-    git clone --depth 1 https://github.com/HinTak/seeed-voicecard.git "$SEEED_SRC" \
-      || git clone --depth 1 https://github.com/respeaker/seeed-voicecard.git "$SEEED_SRC"
-    chown -R "$INSTALL_USER":"$INSTALL_USER" "$SEEED_SRC"
-  fi
-  ( cd "$SEEED_SRC" && sudo ./install.sh ) \
-    || echo "  driver install reported an error — verify after reboot (arecord -l)"
-fi
-
-# Boot overlay for the HAT (idempotent).
+# ---- ReSpeaker WM8960 audio + boot overlay --------------------------------
+# The WM8960 codec is driven by the in-tree kernel driver plus the RPi-official
+# `wm8960-soundcard` overlay. This replaces the out-of-tree seeed-voicecard DKMS
+# driver, which does not build against modern kernels (6.x+). SPI/I2C are needed
+# for the APA102 LEDs and the codec control bus.
 BOOT_CFG=/boot/firmware/config.txt
 [[ -f "$BOOT_CFG" ]] || BOOT_CFG=/boot/config.txt
 say "Ensuring boot overlay in $BOOT_CFG"
@@ -151,8 +138,11 @@ ensure_line() { grep -qxF "$1" "$BOOT_CFG" 2>/dev/null || echo "$1" | sudo tee -
 ensure_line "dtparam=i2c_arm=on"
 ensure_line "dtparam=i2s=on"
 ensure_line "dtparam=spi=on"
-ensure_line "dtoverlay=i2s-mmap"
-ensure_line "dtoverlay=seeed-2mic-voicecard"
+if [[ "$SKIP_AUDIO_DRIVER" == 1 ]]; then
+  say "Skipping the WM8960 audio overlay (--no-audio-driver) — capture will be unavailable"
+else
+  ensure_line "dtoverlay=wm8960-soundcard"
+fi
 
 # ---- Python venv + dependencies -------------------------------------------
 say "Creating the Python venv and installing earshot"
@@ -190,7 +180,7 @@ sudo tee /etc/systemd/system/earshot-alc.service >/dev/null <<UNIT
 Description=earshot — apply WM8960 ALC capture front-end
 After=sound.target
 Before=earshot.service
-ConditionPathExists=/proc/asound/seeed2micvoicec
+ConditionPathExists=/proc/asound/wm8960soundcard
 
 [Service]
 Type=oneshot
@@ -236,14 +226,15 @@ sudo systemctl enable earshot-alc.service earshot.service
 say "Install complete."
 cat <<DONE
 
-  A reboot is required — the seeed-voicecard driver only appears in ALSA after reboot.
+  A reboot is required — the WM8960 sound card only appears in ALSA after reboot
+  (the wm8960-soundcard overlay loads at boot).
 
     sudo reboot
 
   After it comes back up:
     sudo systemctl status earshot     # should be active (running)
     journalctl -u earshot -f          # follow logs
-    arecord -l                        # expect card 'seeed2micvoicec'
+    arecord -l                        # expect card 'wm8960soundcard'
 
   Then browse to  http://<pi-ip>:8080/  (or http://\$(hostname).local:8080/).
   Update later with:  cd $INSTALL_DIR && git pull && bash installer/install.sh

@@ -39,7 +39,7 @@ class AudioConfig:
     sample_rate: int = 16000
     channels: int = 1
     bit_depth: int = 16
-    alsa_pcm: str = "plughw:CARD=seeed2micvoicec,DEV=0"
+    alsa_pcm: str = "plughw:CARD=wm8960soundcard,DEV=0"
 
 
 @dataclass

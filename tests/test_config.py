@@ -15,7 +15,7 @@ def test_defaults_match_spec():
     assert cfg.audio.sample_rate == 16000
     assert cfg.audio.channels == 1
     assert cfg.audio.bit_depth == 16
-    assert cfg.audio.alsa_pcm == "plughw:CARD=seeed2micvoicec,DEV=0"
+    assert cfg.audio.alsa_pcm == "plughw:CARD=wm8960soundcard,DEV=0"
     assert cfg.recording.chunk_duration_seconds == 900
     assert cfg.recording.min_duration_seconds == 3
     assert cfg.recording.encode_bitrate_kbps == 32

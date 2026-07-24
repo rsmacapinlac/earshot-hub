@@ -239,6 +239,18 @@ The spec always wins where it speaks. Nothing here overrides `rpi/specs/`.
   `PYTHONUNBUFFERED=1`. The seeed-voicecard driver is cloned+installed (HinTak fork, respeaker
   fallback) and the boot overlay lines are appended idempotently.
 
+- **WM8960 audio via the in-tree overlay, not the seeed DKMS driver (on-device).** The
+  spec/installer originally built the out-of-tree `seeed-voicecard` driver (card
+  `seeed2micvoicec`). On real hardware (Debian 13, kernel 6.18) that driver **does not
+  build** — the ASoC API moved (`rtd->id`→`rtd->num`, `SND_SOC_DAIFMT_CBM_CFM`→`CBP_CFP`, …).
+  Reconciled to the RPi-official path: the **in-tree WM8960 codec + `dtoverlay=wm8960-soundcard`**
+  (card `wm8960soundcard`). The installer adds the overlay instead of compiling a module;
+  the default `alsa_pcm` is now `plughw:CARD=wm8960soundcard,DEV=0`. The generic overlay
+  leaves the mic **input path muted**, so `apply-alc.sh` now enables the routing
+  (`Input Mixer Boost`, `Input Boost Mixer LINPUT1/RINPUT1`, `Capture`) in addition to the
+  spec's ALC preset, and persists via `alsactl store`. Capture/boost gains are a provisional
+  starting point to tune per room; `ALC Max Gain = 5` stays the v1 value.
+
 - **Safe shutdown wired only on the pi backend (M9).** `earshot/power.py` powers off via
   `reboot(2)` `LINUX_REBOOT_CMD_POWER_OFF` (needs `CAP_SYS_BOOT`, granted by the unit) with a
   `systemctl poweroff --no-wall` fallback. `select_shutdown_fn` returns the real callable only
