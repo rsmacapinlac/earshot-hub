@@ -462,28 +462,28 @@ components:
         diarized: { type: boolean }
 
     SessionDetail:
-      allOf:
-        - { $ref: "#/components/schemas/Session" }
-        - type: object
-          additionalProperties: false
-          required: [id, name, state, created_at, duration, size, has_transcript, diarized, speakers, job]
-          properties:
-            id: { $ref: "#/components/schemas/SessionIdString" }
-            name: { type: [string, "null"] }
-            state: { $ref: "#/components/schemas/SessionState" }
-            created_at: { type: string }
-            duration: { type: [number, "null"] }
-            size: { type: [integer, "null"] }
-            has_transcript: { type: boolean }
-            diarized: { type: boolean }
-            speakers:
-              type: array
-              items: { $ref: "#/components/schemas/Speaker" }
-            job:
-              oneOf:
-                - { $ref: "#/components/schemas/Job" }
-                - { type: "null" }
-              description: The current or most recent job for this session, when relevant.
+      # A superset of Session (standalone rather than allOf, so the closed base's
+      # additionalProperties:false does not reject the extra fields).
+      type: object
+      additionalProperties: false
+      required: [id, name, state, created_at, duration, size, has_transcript, diarized, speakers, job]
+      properties:
+        id: { $ref: "#/components/schemas/SessionIdString" }
+        name: { type: [string, "null"] }
+        state: { $ref: "#/components/schemas/SessionState" }
+        created_at: { type: string }
+        duration: { type: [number, "null"] }
+        size: { type: [integer, "null"] }
+        has_transcript: { type: boolean }
+        diarized: { type: boolean }
+        speakers:
+          type: array
+          items: { $ref: "#/components/schemas/Speaker" }
+        job:
+          oneOf:
+            - { $ref: "#/components/schemas/Job" }
+            - { type: "null" }
+          description: The current or most recent job for this session, when relevant.
 
     SessionList:
       type: object

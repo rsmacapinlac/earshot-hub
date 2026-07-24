@@ -67,17 +67,31 @@ The installer prompts for HAT selection, writes `config.toml`, installs the ReSp
 
 > **Naming note:** the spec's `install-service.md` currently clones `rsmacapinlac/earshot.git` into `~/earshot`. This repository is `earshot-hub`; the commands above use the actual repo name. This discrepancy should be reconciled with the spec.
 
-## Development (off-device) _(planned)_
+## Development (off-device)
 
-Most logic — state machine, storage, API, and the job worker — can be exercised on a workstation using the HAL stub, without the Pi hardware.
+Most logic — state machine, storage, recording pipeline, and the `/v1` API — runs on a
+workstation using the HAL stub, without the Pi hardware. The stub emits real PCM frames,
+so the full record → chunk → encode → `session.m4a` path exercises for real (it needs
+`ffmpeg`/`ffprobe` on `PATH`).
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-python -m earshot            # run with the HAL stub
+
+# Run the whole app against the stub HAL (writes to ./earshot-data by default).
+EARSHOT_HAL=stub EARSHOT_DATA_DIR=./earshot-data python -m earshot
+# then browse to http://localhost:8080/  (API under /v1)
+
+pytest                       # off-device test suite (contract, HAL, config, skeleton)
 ```
 
-Behavior that needs real hardware (WM8960 driver, GPIO/SPI, live capture, reboot-dependent driver init) must be validated on the Pi.
+Useful env vars for development: `EARSHOT_HAL` (`stub`|`pi`, overrides `hardware.hat`),
+`EARSHOT_DATA_DIR` (overrides `[storage].data_dir`), `EARSHOT_CONFIG` (config path),
+`EARSHOT_LOG_LEVEL`.
+
+Behavior that needs real hardware (WM8960 driver, GPIO/SPI, live capture, reboot-dependent
+driver init) must be validated on the Pi — see `docs/ON_DEVICE_SMOKE.md` _(added with the
+installer milestone)_.
 
 ## Service management
 
