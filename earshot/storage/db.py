@@ -141,13 +141,28 @@ class Database:
         return int(row["m"]) if row and row["m"] is not None else 0
 
     def set_sqlite_sequence(self, value: int) -> None:
-        """Bump AUTOINCREMENT's high-water mark so ids never regress after a rebuild."""
+        """Raise AUTOINCREMENT's high-water mark so ids never regress after a rebuild.
+
+        ``sqlite_sequence`` is an internal table with no UNIQUE constraint, so an
+        upsert is impossible; read the current seq and write the max explicitly.
+        The row for ``sessions`` exists once any row has been inserted into the
+        AUTOINCREMENT table (including an explicit-id adopt).
+        """
         with self._lock:
-            self._conn.execute(
-                "INSERT INTO sqlite_sequence (name, seq) VALUES ('sessions', ?) "
-                "ON CONFLICT(name) DO UPDATE SET seq=MAX(seq, excluded.seq)",
-                (value,),
+            cur = self._conn.execute(
+                "SELECT seq FROM sqlite_sequence WHERE name='sessions'"
             )
+            row = cur.fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO sqlite_sequence (name, seq) VALUES ('sessions', ?)",
+                    (value,),
+                )
+            elif value > row[0]:
+                self._conn.execute(
+                    "UPDATE sqlite_sequence SET seq=? WHERE name='sessions'",
+                    (value,),
+                )
             self._conn.commit()
 
     # -- speakers ---------------------------------------------------------- #

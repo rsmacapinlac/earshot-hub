@@ -7,6 +7,7 @@ build/
 dist/
 # Local dev data directory when running the stub
 earshot-data/
+earshot-data-demo/
 *.db
 *.db-wal
 *.db-shm

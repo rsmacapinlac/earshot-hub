@@ -48,11 +48,18 @@ def build_application(
     hal_override: str | None = None,
     realtime: bool = True,
     shutdown_fn=None,
+    reconcile_on_start: bool = True,
 ) -> Application:
     config = config or Config.load()
     hal = build_hal(config, override=hal_override, realtime=realtime)
     db = Database(config.db_path)
     store = Store(config, db)
+    if reconcile_on_start:
+        # Recover from crashes / a lost DB before the control loop can allocate
+        # new ids (rpi/specs/storage.md#reconciliation).
+        from earshot.storage.reconcile import reconcile
+
+        reconcile(store, hal.capture.spec)
     controller = Controller(config, hal, store, shutdown_fn=shutdown_fn)
     flask_app = create_app(controller, store, config)
     return Application(

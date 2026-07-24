@@ -43,6 +43,25 @@ class Store:
     def session_dir(self, session_id: int) -> Path:
         return session_dir(self.recordings_dir, session_id)
 
+    def iter_session_dirs(self) -> dict[int, Path]:
+        """On-disk ``rec-NNNNNN`` session directories, keyed by parsed id.
+
+        Used by startup reconciliation to compare the filesystem against the DB
+        (rpi/specs/storage.md#reconciliation). Non-matching entries are ignored.
+        """
+        from earshot.storage.paths import parse_session_id
+
+        found: dict[int, Path] = {}
+        if not self.recordings_dir.exists():
+            return found
+        for child in self.recordings_dir.iterdir():
+            if not child.is_dir():
+                continue
+            sid = parse_session_id(child.name)
+            if sid is not None:
+                found[sid] = child
+        return found
+
     def m4a_path(self, session_id: int) -> Path:
         return self.session_dir(session_id) / m4a_name()
 

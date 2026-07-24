@@ -65,6 +65,31 @@ The spec always wins where it speaks. Nothing here overrides `rpi/specs/`.
   `status.json`. In the `PUT /v1/sessions/{id}/speakers/{label}` path the label is
   URL-encoded (`Speaker%201`).
 
+- **Reconciliation edge cases (M4).** `storage.md`'s table covers the four
+  disagreements; these silent-spot rulings fill the gaps:
+  - **Empty orphan directory** (a `rec-*` dir with no `session.m4a`, no usable chunks, and
+    no DB row) has nothing to adopt — it is **left in place and logged**, not adopted or
+    deleted. Adoption requires audio to reconstruct a row from.
+  - **`created_at` on adoption** comes from `status.json`; if that is absent it falls back
+    to `datetime.now()`. Per the spec `created_at` is descriptive and clock-independent —
+    nothing recovers or orders by it — so a fabricated value is harmless.
+  - **`size` on adoption** is read from the `session.m4a` file itself (authoritative);
+    `status.json` does not record size. `duration` prefers the recovery probe, then
+    `status.json`, then a fresh `ffprobe`.
+  - **Unfinalized-chunk header repair.** A chunk whose session crashed before `close()`
+    keeps stale RIFF/`data` length fields describing only its first block. Recovery rewrites
+    both length fields from the file size, frame-aligned (dropping a torn trailing frame),
+    so ffmpeg reads the whole chunk — the spec's "read tolerantly, frame count from the file
+    size." The repair only touches canonical `RIFF…data` WAVs (the ChunkWriter's own output).
+  - **Reappearing directory** clears a previously-set `missing` flag; ids are never reused,
+    so the row is reactivated in place rather than re-created.
+
+- **`sqlite_sequence` upsert fix (M4).** `set_sqlite_sequence` originally used
+  `INSERT … ON CONFLICT(name)`, but SQLite's internal `sqlite_sequence` table has no UNIQUE
+  constraint, so the upsert raised at runtime. It now reads the current `seq` and writes the
+  max explicitly. This path was first exercised by reconciliation (adoption), so the latent
+  bug surfaced in M4.
+
 ## References
 
 - **Design mockup imported.** The "Earshot Raspberry Pi UI" Claude Design project was

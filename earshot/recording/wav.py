@@ -8,6 +8,7 @@ chunk); they are concatenated and encoded at session end, then deleted.
 
 from __future__ import annotations
 
+import struct
 import wave
 from pathlib import Path
 
@@ -15,6 +16,10 @@ from earshot.hal.protocols import CaptureSpec
 from earshot.storage.paths import chunk_name
 
 _WAV_HEADER_BYTES = 44
+# Byte offsets into the canonical 44-byte PCM WAV header the ChunkWriter emits.
+_RIFF_SIZE_OFFSET = 4     # "<L": 36 + data_bytes
+_DATA_MARK_OFFSET = 36    # b"data"
+_DATA_SIZE_OFFSET = 40    # "<L": data_bytes
 
 
 class ChunkWriter:
@@ -64,6 +69,41 @@ class ChunkWriter:
 
     def close(self) -> None:
         self._close_current()
+
+
+def repair_wav_header(path: Path, spec: CaptureSpec) -> int:
+    """Rewrite a chunk's RIFF/data size fields from the actual file size.
+
+    The :class:`ChunkWriter` patches these lengths in ``close()``. A chunk whose
+    session crashed before ``close()`` carries stale lengths that describe only
+    the first written block, so ffmpeg — which trusts the header — would read
+    just those bytes and lose the rest of the chunk. Recompute both length fields
+    from the file size, frame-aligned, so the whole chunk is read
+    (rpi/specs/storage.md#crash-recovery).
+
+    Returns the frame count the header now describes: ``0`` if the file is too
+    small, header-only, or not the canonical PCM WAV the ChunkWriter emits (in
+    which case it is left untouched and should be skipped).
+    """
+    path = Path(path)
+    size = path.stat().st_size
+    if size < _WAV_HEADER_BYTES:
+        return 0  # torn before a full header — nothing usable
+    data_bytes = size - _WAV_HEADER_BYTES
+    data_bytes -= data_bytes % spec.frame_bytes  # drop a torn trailing frame
+    if data_bytes <= 0:
+        return 0  # header only, no audio
+    with open(path, "r+b") as f:
+        if f.read(4) != b"RIFF":
+            return 0  # not a RIFF/WAV file; do not touch it
+        f.seek(_DATA_MARK_OFFSET)
+        if f.read(4) != b"data":
+            return 0  # non-canonical layout; leave it for a human
+        f.seek(_RIFF_SIZE_OFFSET)
+        f.write(struct.pack("<L", 36 + data_bytes))
+        f.seek(_DATA_SIZE_OFFSET)
+        f.write(struct.pack("<L", data_bytes))
+    return data_bytes // spec.frame_bytes
 
 
 def wav_frame_count(path: Path, spec: CaptureSpec) -> int:
