@@ -251,3 +251,60 @@ The spec always wins where it speaks. Nothing here overrides `rpi/specs/`.
 - **Design mockup imported.** The "Earshot Raspberry Pi UI" Claude Design project was
   imported to `docs/design-reference/earshot-rpi-web-ui.dc.html` (UX/interaction reference
   only — the `/v1` API is the contract). Used to build the web UI milestone.
+
+---
+
+# Build report (final)
+
+The 10-milestone build is complete (M1–M10). Summary per the build prompt's finish
+requirements.
+
+## (a) Spec-gap defaults chosen
+Recorded in full above; in brief: Flask + waitress web stack; OpenAPI 3.1 as the single
+schema source; `state = processing` only for **local** work; faster-whisper behind the
+`[transcription]` extra with an injectable fake for tests; vanilla no-build frontend;
+`hardware.hat = "stub"` as the second HAL backend value; ISO-8601 local timestamps
+(descriptive only); `"Speaker N"` label form; reconciliation edge rulings (empty orphan dirs,
+`created_at`/`size`/duration sourcing, WAV-header repair); worker↔loop coordination via
+serialized `proc_*` commands; the stdlib service client; targeted `config.toml` persistence;
+UI focus-preserving re-render + SSE change hints; `earshot-alc.service` applying ALC at boot.
+
+## (b) Spec contradictions found and how they were resolved
+- **Install identity** — `install-service.md` clones `earshot.git` into `~/earshot`; this repo
+  is `earshot-hub`. The installer derives `install_dir` from the checkout and keeps `data_dir`
+  separate (`~/earshot-data`). The Python package stays `earshot`.
+- **Web port** — prose elsewhere writes `http://<pi-ip>/` without a port; the `configuration.md`
+  default `8080` wins.
+- **Stale config sections** — earlier drafts used `[encoding]`/`[shutdown]`/`[diarization]`;
+  the current schema supersedes them, and unknown sections are now rejected with a clear error.
+- **ALC persistence timing** — the spec says the installer "applies and persists" the WM8960
+  ALC preset, but the seeed-voicecard driver isn't in ALSA until after a reboot, so it cannot
+  run during install. Resolved by a boot-time oneshot (`earshot-alc.service`) that applies +
+  persists it idempotently.
+
+## (c) Validated off-device vs. on-device
+**Off-device (206 automated tests, HAL stub + injected fakes):** OpenAPI contract binding;
+HAL stub; storage reconciliation + crash recovery; the state-machine transition table
+(checked against an independent transcription of the spec) + behavioural shutdown/disk paths;
+the job engine — enqueue/route/retry/preemption/cancel/crash-reset — with a fake transcriber;
+service integration (fake client) **and** the real `urllib` client over a throwaway HTTP
+server; diarization + speaker naming + voice samples; the web endpoints (audio/Range, rename,
+delete) and static serving; SSE change hints; full `config.toml` validation; installer
+`config.toml` template + unit-field presence + `bash -n`; and that safe-shutdown is wired only
+on the pi backend. A live end-to-end smoke (record → reconcile → serve) was also run.
+
+**On-device only (manual, `docs/ON_DEVICE_SMOKE.md` — never faked as passing):** seeed-voicecard
+driver init (reboot-dependent), WM8960 ALC front-end, live 16 kHz mono capture, the GPIO17
+button, APA102 SPI LEDs, `CAP_SYS_BOOT` power-off, the real faster-whisper model path, and a
+real processing service.
+
+## (d) Not implemented / deliberately deferred
+- **FR-10 phone-hotspot setup** is a one-off manual `nmcli` step over SSH (documented in
+  `install-service.md`); it is intentionally **not** automated by `install.sh`.
+- **`XDG_RUNTIME_DIR`** is left out of the systemd unit; the spec says set it "only if required
+  by the selected GPIO/SPI/audio libraries" — to be confirmed during on-device bring-up.
+- **`encode_bitrate_kbps = 32`** and **`ALC Max Gain = 5`** ship as the spec's provisional v1
+  values, to be revisited against real hardware audio.
+- The **real faster-whisper inference** and the **actual processing-service** behaviour are
+  external to this repo; the local subprocess seam degrades cleanly without the model, and the
+  service is exercised against a fake and the real transport.

@@ -2,7 +2,7 @@
 
 The **Raspberry Pi** implementation of [earshot](https://github.com/rsmacapinlac/earshot-spec) — a local-first, desk-mounted conversation recorder with a LAN web UI. Audio is captured on-device, encoded to a single per-session file, and transcribed locally with no internet or API keys required. An optional LAN processing service adds speed and speaker diarization.
 
-> **Status: scaffolding.** This repository is being set up against the `rpi/` track of the spec. The layout and commands below describe the **intended** structure; items marked _(planned)_ do not exist yet.
+> **Status: complete (v1).** Built to the `rpi/` track of the spec across 10 milestones — API contract, HAL + stub, recording, storage recovery, state machine, jobs + local transcription, processing-service integration + diarization, web UI, installer + systemd, and config validation. Hardware-dependent behaviour is validated per [`docs/ON_DEVICE_SMOKE.md`](docs/ON_DEVICE_SMOKE.md); everything else has an off-device test suite (`pytest`).
 
 ## Hardware
 
@@ -37,16 +37,18 @@ Contributor conventions for AI agents working in this repo live in [`AGENTS.md`]
 - `ffmpeg` for AAC-LC encoding; `faster-whisper` for local transcription
 - Hardware (button, LEDs, capture) behind a **HAL** with a development **stub** for off-device work
 
-## Repository layout _(intended)_
+## Repository layout
 
 ```
 earshot-hub/
-├── earshot/            # Python package — run via `python -m earshot`   (planned)
-│   ├── hal/            # button / LED / capture interfaces + dev stub   (planned)
-│   ├── api/            # /v1 HTTP API + SSE                             (planned)
-│   ├── ...             # state machine, storage, recording, jobs, processing
+├── earshot/            # Python package — run via `python -m earshot`
+│   ├── hal/            # button / LED / capture interfaces + dev stub
+│   ├── api/            # /v1 HTTP API + SSE
+│   ├── ...             # state machine, storage, recording, jobs, processing, service, power
+│   └── web/            # vanilla web UI (index.html + app.js)
 ├── installer/
-│   └── install.sh      # on-device installer                           (planned)
+│   ├── install.sh      # on-device installer
+│   └── apply-alc.sh    # WM8960 ALC front-end (applied at boot)
 ├── AGENTS.md           # agent contributor instructions
 └── README.md
 ```
@@ -56,7 +58,7 @@ At runtime the code is split across two locations (see `rpi/specs/install-servic
 - **install_dir** (git checkout, e.g. `~/earshot-hub`) — read-only at runtime
 - **data_dir** (e.g. `~/earshot-data`) — writable: `config.toml`, state DB, `session.m4a` artifacts, transcription cache
 
-## Installation (on the Pi) _(planned)_
+## Installation (on the Pi)
 
 ```bash
 git clone https://github.com/rsmacapinlac/earshot-hub.git ~/earshot-hub
@@ -90,8 +92,7 @@ Useful env vars for development: `EARSHOT_HAL` (`stub`|`pi`, overrides `hardware
 `EARSHOT_LOG_LEVEL`.
 
 Behavior that needs real hardware (WM8960 driver, GPIO/SPI, live capture, reboot-dependent
-driver init) must be validated on the Pi — see `docs/ON_DEVICE_SMOKE.md` _(added with the
-installer milestone)_.
+driver init) must be validated on the Pi — see [`docs/ON_DEVICE_SMOKE.md`](docs/ON_DEVICE_SMOKE.md).
 
 ## Service management
 

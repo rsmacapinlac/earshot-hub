@@ -92,9 +92,16 @@ def main() -> None:
         level=os.environ.get("EARSHOT_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    from earshot.config import ConfigError
     from earshot.power import select_shutdown_fn
 
-    config = Config.load()
+    try:
+        config = Config.load()
+    except ConfigError as exc:
+        # A misconfiguration is an operator error, not a crash: say what's wrong
+        # and exit non-zero (systemd will not thrash-restart on a clean exit).
+        log.error("configuration error: %s", exc)
+        raise SystemExit(2) from exc
     # Real power-off only on the pi backend; never on the stub (dev machine safe).
     app = build_application(config=config, shutdown_fn=select_shutdown_fn(config))
     app.start()

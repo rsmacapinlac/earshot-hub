@@ -20,6 +20,9 @@ else:  # pragma: no cover - project targets 3.11+
     import tomli as tomllib
 
 DEFAULT_DATA_DIR = "~/earshot-data"
+# HAT values the HAL knows (rpi/adr/hardware-abstraction-layer.md): the real
+# ReSpeaker backend, and the dev stub. Kept in sync with earshot.hal.bundle.
+_KNOWN_HATS = {"respeaker", "stub"}
 
 
 class ConfigError(ValueError):
@@ -130,7 +133,11 @@ class Config:
                 raw = tomllib.load(fh)
         except (OSError, tomllib.TOMLDecodeError) as exc:
             raise ConfigError(f"cannot read {config_path}: {exc}") from exc
-        cfg = cls.from_dict(raw)
+        try:
+            cfg = cls.from_dict(raw)
+        except ConfigError as exc:
+            # Point the operator straight at the offending file.
+            raise ConfigError(f"{config_path}: {exc}") from exc
         cfg.source_path = config_path
         return cfg
 
@@ -145,6 +152,13 @@ class Config:
             "processing": ProcessingConfig,
             "web": WebConfig,
         }
+        unknown = [s for s in raw if s not in sections]
+        if unknown:
+            names = ", ".join(f"[{s}]" for s in unknown)
+            raise ConfigError(
+                f"unknown config section(s): {names} "
+                f"(valid: {', '.join('[' + s + ']' for s in sections)})"
+            )
         kwargs: dict[str, Any] = {}
         for name, section_cls in sections.items():
             kwargs[name] = _build_section(name, section_cls, raw.get(name, {}))
@@ -174,22 +188,57 @@ class Config:
     # -- Validation -------------------------------------------------------- #
 
     def validate(self) -> None:
+        """Full validation against configuration.md, with clear per-key errors."""
+        # [hardware]
+        if self.hardware.hat not in _KNOWN_HATS:
+            raise ConfigError(
+                f"hardware.hat must be one of {sorted(_KNOWN_HATS)}, got {self.hardware.hat!r}"
+            )
+        # [audio] — fixed capture format: mono, 16-bit PCM (recording.md).
+        a = self.audio
+        if a.sample_rate <= 0:
+            raise ConfigError("audio.sample_rate must be > 0")
+        if a.channels != 1:
+            raise ConfigError("audio.channels must be 1 (mono, left mic)")
+        if a.bit_depth != 16:
+            raise ConfigError("audio.bit_depth must be 16 (16-bit PCM)")
+        if not a.alsa_pcm:
+            raise ConfigError("audio.alsa_pcm must not be empty")
+        # [recording]
         r = self.recording
-        if r.min_duration_seconds < 0:
-            raise ConfigError("recording.min_duration_seconds must be >= 0")
         if r.chunk_duration_seconds <= 0:
             raise ConfigError("recording.chunk_duration_seconds must be > 0")
+        if r.min_duration_seconds < 0:
+            raise ConfigError("recording.min_duration_seconds must be >= 0")
         if r.encode_bitrate_kbps <= 0:
             raise ConfigError("recording.encode_bitrate_kbps must be > 0")
-        if self.audio.channels != 1:
-            # Mono, left mic only (recording.md). Guard rather than silently mis-capture.
-            raise ConfigError("audio.channels must be 1 (mono, left mic)")
+        if r.shutdown_hold_seconds <= 0:
+            raise ConfigError("recording.shutdown_hold_seconds must be > 0")
+        # [storage]
+        if not self.storage.data_dir:
+            raise ConfigError("storage.data_dir must not be empty")
         if not (0 < self.storage.disk_threshold_percent <= 100):
             raise ConfigError("storage.disk_threshold_percent must be in (0, 100]")
+        # [transcription]
+        t = self.transcription
+        if not t.model:
+            raise ConfigError("transcription.model must not be empty")
+        if t.threads < 1:
+            raise ConfigError("transcription.threads must be >= 1")
+        # [processing]
+        p = self.processing
+        url = p.service_url.strip()
+        if url and not (url.startswith("http://") or url.startswith("https://")):
+            raise ConfigError("processing.service_url must start with http:// or https:// (or be empty)")
+        if p.poll_interval_seconds <= 0:
+            raise ConfigError("processing.poll_interval_seconds must be > 0")
+        if p.max_failures < 0:
+            raise ConfigError("processing.max_failures must be >= 0 (0 = retry forever)")
+        # [web]
+        if not self.web.bind_address:
+            raise ConfigError("web.bind_address must not be empty")
         if not (0 < self.web.port < 65536):
             raise ConfigError("web.port must be in (0, 65535]")
-        if self.processing.max_failures < 0:
-            raise ConfigError("processing.max_failures must be >= 0")
 
 
 def _set_service_url(text: str, url: str) -> str:
