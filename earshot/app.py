@@ -17,6 +17,7 @@ from flask import Flask
 from earshot.api.server import create_app
 from earshot.config import Config
 from earshot.hal.bundle import Hal, build_hal
+from earshot.jobs.worker import JobWorker
 from earshot.statemachine.machine import Controller
 from earshot.storage.db import Database
 from earshot.storage.store import Store
@@ -31,13 +32,16 @@ class Application:
     db: Database
     store: Store
     controller: Controller
+    worker: "JobWorker"
     flask_app: Flask
 
     def start(self) -> None:
         self.controller.start()
         self.controller.wait_ready(timeout=5)
+        self.worker.start()
 
     def stop(self) -> None:
+        self.worker.stop()
         self.controller.stop()
         self.db.close()
 
@@ -49,6 +53,7 @@ def build_application(
     realtime: bool = True,
     shutdown_fn=None,
     reconcile_on_start: bool = True,
+    transcriber_factory=None,
 ) -> Application:
     config = config or Config.load()
     hal = build_hal(config, override=hal_override, realtime=realtime)
@@ -60,11 +65,17 @@ def build_application(
         from earshot.storage.reconcile import reconcile
 
         reconcile(store, hal.capture.spec)
+    # Any job left `running` by a crash is returned to `queued` before the worker
+    # starts (rpi/specs/processing.md#crash-resilience).
+    db.reset_running_jobs()
+
     controller = Controller(config, hal, store, shutdown_fn=shutdown_fn)
-    flask_app = create_app(controller, store, config)
+    worker = JobWorker(config, store, controller, transcriber_factory=transcriber_factory)
+    controller.attach_worker(worker)
+    flask_app = create_app(controller, store, config, worker)
     return Application(
         config=config, hal=hal, db=db, store=store,
-        controller=controller, flask_app=flask_app,
+        controller=controller, worker=worker, flask_app=flask_app,
     )
 
 

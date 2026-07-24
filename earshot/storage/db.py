@@ -232,3 +232,87 @@ class Database:
             "ORDER BY id DESC LIMIT 1",
             (session_id,),
         )
+
+    # -- job queue (the worker drives these) ------------------------------- #
+
+    def peek_next_job(self) -> sqlite3.Row | None:
+        """The oldest queued job (enqueue order = job id), or None. Not claimed."""
+        return self._query_one(
+            "SELECT * FROM jobs WHERE state='queued' ORDER BY id ASC LIMIT 1"
+        )
+
+    def mark_job_running(self, job_id: int, route: str, started_at: str) -> bool:
+        """Claim a queued job for *route*. False if it is no longer queued (e.g.
+        cancelled underneath us) — the caller re-peeks. The route is fixed here, at
+        dequeue, not at enqueue (rpi/specs/processing.md#the-queue)."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE jobs SET state='running', route=?, started_at=? "
+                "WHERE id=? AND state='queued'",
+                (route, started_at, job_id),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def mark_job_done(self, job_id: int, finished_at: str) -> None:
+        self._execute(
+            "UPDATE jobs SET state='done', stage=NULL, progress=NULL, "
+            "last_error=NULL, finished_at=? WHERE id=?",
+            (finished_at, job_id),
+        )
+
+    def mark_job_failed(self, job_id: int, attempts: int, last_error: str, finished_at: str) -> None:
+        """Terminal failure: retries exhausted (rpi/specs/processing.md#failure)."""
+        self._execute(
+            "UPDATE jobs SET state='failed', attempts=?, last_error=?, "
+            "stage=NULL, progress=NULL, finished_at=? WHERE id=?",
+            (attempts, last_error, finished_at, job_id),
+        )
+
+    def requeue_job(self, job_id: int, *, attempts: int | None = None,
+                    last_error: str | None = None) -> None:
+        """Return a job to the queue, keeping its id (so it stays in order/front).
+
+        Used both for a retry (pass the bumped *attempts* and *last_error*) and for
+        preemption/crash recovery (pass neither — not a failure)."""
+        fields: dict[str, Any] = {
+            "state": "queued", "route": None, "started_at": None,
+            "finished_at": None, "stage": None, "progress": None, "remote_job_id": None,
+        }
+        if attempts is not None:
+            fields["attempts"] = attempts
+        if last_error is not None:
+            fields["last_error"] = last_error
+        self.update_job(job_id, **fields)
+
+    def reset_running_jobs(self) -> int:
+        """Return every ``running`` job to ``queued`` on startup (crash resilience).
+
+        M6 is local-only, so all running jobs simply re-run; the service-resume
+        refinement (keep a ``remote_job_id`` and poll) lands in M7."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE jobs SET state='queued', route=NULL, started_at=NULL, "
+                "stage=NULL, progress=NULL, remote_job_id=NULL WHERE state='running'"
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    def cancel_queued_job(self, job_id: int, finished_at: str) -> bool:
+        """Drop a queued job. False if it is not (still) queued."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE jobs SET state='cancelled', finished_at=? "
+                "WHERE id=? AND state='queued'",
+                (finished_at, job_id),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def set_job_cancelled(self, job_id: int, finished_at: str) -> None:
+        """Mark a job cancelled unconditionally (a running job the worker killed)."""
+        self._execute(
+            "UPDATE jobs SET state='cancelled', stage=NULL, progress=NULL, "
+            "finished_at=? WHERE id=?",
+            (finished_at, job_id),
+        )

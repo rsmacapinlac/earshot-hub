@@ -1,8 +1,9 @@
 """Processing jobs — durable queue in the ``jobs`` table, one in-process worker.
 
-The worker, routing (local subprocess vs. service), retry semantics, and
-preemption land in the jobs and service milestones. This package currently
-provides the job serialiser used by the API and store.
+The queue is the table; :class:`~earshot.jobs.worker.JobWorker` is the single
+thread that drains it, deciding the route (local subprocess vs. service) at
+dequeue. Local transcription runs in a cancellable child process
+(:mod:`earshot.jobs.transcribe`); the service route lands in M7.
 """
 
 from earshot.jobs.serialize import job_api

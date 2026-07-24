@@ -52,10 +52,11 @@ _COMMAND_TRIGGERS = {"start": Trigger.START, "stop": Trigger.STOP}
 
 @dataclass
 class _Command:
-    kind: str  # "start" | "stop"
+    kind: str  # "start" | "stop" | "proc_begin" | "proc_end"
     done: threading.Event = field(default_factory=threading.Event)
     result: Any = None
     error: ApiError | None = None
+    payload: Any = None
 
     def resolve(self, result: Any) -> None:
         self.result = result
@@ -90,6 +91,8 @@ class Controller:
         self._started_monotonic: float | None = None
         self._recorder: Recorder | None = None
         self._ready = threading.Event()
+        self._processing: dict | None = None  # running local-job snapshot (status)
+        self._worker = None  # set by attach_worker; the job worker to preempt
 
         # Action name -> handler. The table names an Action; the Controller binds it.
         self._actions: dict[Action, Callable[[Transition], Any]] = {
@@ -108,6 +111,10 @@ class Controller:
 
     def wait_ready(self, timeout: float | None = None) -> bool:
         return self._ready.wait(timeout)
+
+    def attach_worker(self, worker) -> None:
+        """Wire the job worker so recording can preempt a running local job."""
+        self._worker = worker
 
     def stop(self) -> None:
         self._stop.set()
@@ -141,11 +148,33 @@ class Controller:
         with self._state_lock:
             return self._session_id if self._state is State.RECORDING else None
 
+    def is_recording(self) -> bool:
+        with self._state_lock:
+            return self._state is State.RECORDING
+
+    # -- worker coordination (called from the job worker thread) ----------- #
+
+    def begin_processing(self, snapshot: dict) -> bool:
+        """Ask to enter ``processing`` for a local job. Granted only when idle, so a
+        local job never runs during a recording. Serialised on the control loop."""
+        cmd = _Command("proc_begin", payload=snapshot)
+        self._commands.put(cmd)
+        if not cmd.done.wait(_COMMAND_TIMEOUT_SECONDS):
+            return False
+        return bool(cmd.result)
+
+    def end_processing(self) -> None:
+        """Leave ``processing`` when a local job finishes. Serialised on the loop."""
+        cmd = _Command("proc_end")
+        self._commands.put(cmd)
+        cmd.done.wait(_COMMAND_TIMEOUT_SECONDS)
+
     def status(self) -> dict:
         with self._state_lock:
             state = self._state
             session_id = self._session_id
             started = self._started_monotonic
+            processing = self._processing
         recording = None
         if state is State.RECORDING and session_id is not None and started is not None:
             recording = {
@@ -158,7 +187,7 @@ class Controller:
             "state": state.value,
             "led": {"rgb": list(led.rgb), "pattern": led.pattern.value},
             "recording": recording,
-            "processing": None,  # populated once the job worker lands (M6)
+            "processing": processing,  # a running local job; also set for service jobs (M7)
             "disk": {"used_percent": disk.used_percent, "blocked": disk.blocked},
         }
 
@@ -231,11 +260,10 @@ class Controller:
         if self._state is not state:
             return  # disk sensing changed state; re-evaluate next tick
 
-        # A queued web command takes priority over a fresh button press.
+        # A queued command takes priority over a fresh button press.
         cmd = self._take_command()
         if cmd is not None:
-            self._fire(_COMMAND_TRIGGERS[cmd.kind], command=cmd)
-            self._reject_pending("device busy")
+            self._handle_command(cmd)
             return
 
         timeout = 0.0 if self._state is State.RECORDING else _IDLE_POLL_SECONDS
@@ -261,6 +289,31 @@ class Controller:
             log.warning("disk threshold reached mid-session; stopping recording")
             self._fire(Trigger.DISK_BLOCKED)         # RECORDING -> FINALIZING (END)
 
+    def _handle_command(self, cmd: _Command) -> None:
+        if cmd.kind in _COMMAND_TRIGGERS:
+            self._fire(_COMMAND_TRIGGERS[cmd.kind], command=cmd)
+            self._reject_pending("device busy")
+        elif cmd.kind == "proc_begin":
+            cmd.resolve(self._grant_processing(cmd.payload))
+        elif cmd.kind == "proc_end":
+            self._end_processing_internal()
+            cmd.resolve(None)
+
+    def _grant_processing(self, snapshot: dict | None) -> bool:
+        """Enter ``processing`` for a local job if the device is idle (table:
+        IDLE/DISK_FULL + JOB_STARTED). Denied while recording/finalizing/processing."""
+        tr = lookup(self._state, Trigger.JOB_STARTED)
+        if tr is None:
+            return False
+        self._processing = snapshot
+        self._enter(tr.target)  # -> PROCESSING (amber, very slow pulse)
+        return True
+
+    def _end_processing_internal(self) -> None:
+        self._processing = None
+        if self._state is State.PROCESSING:
+            self._advance(Trigger.JOB_FINISHED)  # PROCESSING -> IDLE
+
     def _take_command(self) -> _Command | None:
         try:
             return self._commands.get_nowait()
@@ -270,13 +323,20 @@ class Controller:
     def _reject_pending(self, message: str) -> None:
         """Fail any start/stop that queued during a synchronous action (finalize).
 
-        Actions block the loop while they run, so commands that arrive mid-encode
-        are "during post-recording processing" and are rejected, per FR-3."""
+        Actions block the loop while they run, so start/stop that arrive mid-encode
+        are "during post-recording processing" and are rejected, per FR-3. Worker
+        (``proc_*``) commands are left queued and handled normally next tick."""
+        keep: list[_Command] = []
         while True:
             cmd = self._take_command()
             if cmd is None:
-                return
-            cmd.fail(ApiError(409, "busy", message))
+                break
+            if cmd.kind in _COMMAND_TRIGGERS:
+                cmd.fail(ApiError(409, "busy", message))
+            else:
+                keep.append(cmd)
+        for cmd in keep:
+            self._commands.put(cmd)
 
     # -- actions ----------------------------------------------------------- #
 
@@ -302,14 +362,14 @@ class Controller:
     def _do_preempt_record(self, tr: Transition) -> dict:
         # FR-2: a local job yields to recording — cancel it and requeue to the front.
         self._preempt_local_job()
+        self._processing = None
         return self._do_begin(tr)
 
     def _preempt_local_job(self) -> None:
-        """Cancel a running local job and return it to the front of the queue.
-
-        A no-op until the job worker exists (M6); the transition is already in the
-        table so recording can preempt local processing the moment it lands."""
-        return None
+        """Terminate a running local job so it returns to the queue; recording then
+        begins without delay (rpi/specs/processing.md#preemption)."""
+        if self._worker is not None:
+            self._worker.preempt()
 
     def _do_end(self, tr: Transition) -> dict:
         self._enter(tr.target)  # FINALIZING (amber)

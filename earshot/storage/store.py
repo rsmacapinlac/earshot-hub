@@ -68,6 +68,9 @@ class Store:
     def transcript_path(self, session_id: int) -> Path:
         return self.session_dir(session_id) / TRANSCRIPT_MD
 
+    def transcript_raw_path(self, session_id: int) -> Path:
+        return self.session_dir(session_id) / TRANSCRIPT_RAW
+
     def diarized_raw_path(self, session_id: int) -> Path:
         return self.session_dir(session_id) / TRANSCRIPT_DIARIZED_RAW
 
@@ -99,6 +102,82 @@ class Store:
         self.db.update_session(session_id, name=name)
         if self.m4a_path(session_id).exists():
             self.write_status_json(session_id)
+
+    # -- transcripts (job results) ---------------------------------------- #
+
+    def write_transcript_result(self, session_id: int, segments, *, diarized: bool = False) -> None:
+        """Persist a completed job's segments and render ``transcript.md``.
+
+        A plain transcribe **reverts** any prior diarization (removes the diarized
+        raw and clears speaker labels), which is how a diarized session is reverted
+        even locally (rpi/specs/processing.md#diarization). Diarize registers the
+        detected labels. There is only ever one ``transcript.md`` per session.
+        """
+        import json
+
+        from earshot.jobs.transcript import render
+
+        sdir = self.session_dir(session_id)
+        raw_name = TRANSCRIPT_DIARIZED_RAW if diarized else TRANSCRIPT_RAW
+        payload = [s.api() for s in segments]
+        self._atomic_write(sdir / raw_name, json.dumps(payload, indent=2))
+
+        if diarized:
+            self.db.update_session(session_id, diarized=1)
+            labels = sorted({s.speaker for s in segments if s.speaker})
+            self.db.replace_speakers(session_id, labels)
+        else:
+            self.diarized_raw_path(session_id).unlink(missing_ok=True)
+            self.db.clear_speakers(session_id)
+            self.db.update_session(session_id, diarized=0)
+
+        row = self.db.get_session(session_id)
+        header = row["name"] or render_session_id(session_id)
+        md = render(
+            header=header,
+            session_dirname=render_session_id(session_id),
+            duration=row["duration"] or 0.0,
+            segments=list(segments),
+        )
+        self._atomic_write(sdir / TRANSCRIPT_MD, md)
+        self.write_status_json(session_id)
+
+    def read_current_segments(self, session_id: int) -> list:
+        """The current transcript's segments (diarized raw if diarized, else raw)."""
+        import json
+
+        from earshot.jobs.transcript import segments_from_raw
+
+        path = self.diarized_raw_path(session_id) if self.is_diarized(session_id) \
+            else self.transcript_raw_path(session_id)
+        if not path.exists():
+            return []
+        return segments_from_raw(json.loads(path.read_text(encoding="utf-8")))
+
+    def transcript_markdown(self, session_id: int) -> str | None:
+        path = self.transcript_path(session_id)
+        return path.read_text(encoding="utf-8") if path.exists() else None
+
+    def pending_session_ids(self) -> list[int]:
+        """Sessions eligible for a bulk transcribe: finalized, no transcript, no
+        active job, and no unresolved failure — oldest id first."""
+        out: list[int] = []
+        for row in self.db.list_sessions():
+            sid = int(row["id"])
+            if row["missing"] or not self.m4a_path(sid).exists():
+                continue
+            if self.has_transcript(sid) or self.db.active_job_for_session(sid) is not None:
+                continue
+            latest = self.db.latest_job_for_session(sid)
+            if latest is not None and latest["state"] == "failed":
+                continue
+            out.append(sid)
+        return sorted(out)
+
+    def _atomic_write(self, path: Path, text: str) -> None:
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
 
     # -- disk -------------------------------------------------------------- #
 
