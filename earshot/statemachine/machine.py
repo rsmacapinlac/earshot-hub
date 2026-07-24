@@ -1,14 +1,19 @@
-"""Control loop + Controller.
+"""Control loop + Controller, driven by the explicit transition table.
 
-The loop thread owns every state transition. The button is read inside the loop;
-the API hands work in as commands on a queue and blocks on the result, so the two
-surfaces cannot act concurrently. Capture is read block-by-block inside the loop so
-a stop (button or web) is honoured between blocks — this is the "single-threaded
-control loop" the spec describes, not a separate capture thread.
+The loop thread owns every state transition. It turns inputs — a button gesture,
+a queued web command, a sensed disk-threshold crossing, an internal completion —
+into a :class:`~earshot.statemachine.transitions.Trigger`, and routes it through
+:data:`~earshot.statemachine.transitions.TABLE`. A ``(state, trigger)`` pair not
+in the table is ignored, which is how the spec words most of its prohibitions.
 
-Skeleton scope (M3): idle <-> recording <-> finalizing, disk gating, min-duration
-discard, and safe-shutdown dispatch. Local-vs-service job preemption and the
-Processing state are layered on in later milestones.
+The button is read inside the loop; the API hands work in as commands on a queue
+and blocks on the result, so the two surfaces cannot act concurrently — the
+"single-threaded control loop" the spec describes, not a separate capture thread.
+
+Live in M5: idle ↔ recording ↔ finalizing, disk gating, min-duration discard,
+safe-shutdown. The table also encodes the ``processing`` state and the local-job
+preemption rule (FR-2); the Controller starts emitting the job triggers when the
+worker lands (M6).
 """
 
 from __future__ import annotations
@@ -23,9 +28,17 @@ from typing import Any, Callable
 from earshot.api.errors import ApiError
 from earshot.config import Config
 from earshot.hal.bundle import Hal
-from earshot.hal.led_states import DISCARDED, READY, RECORDING, SHUTTING_DOWN, led_state_for
+from earshot.hal.led_states import DISCARDED, SHUTTING_DOWN, led_state_for
 from earshot.recording.encode import EncodeError
 from earshot.recording.recorder import Recorder
+from earshot.statemachine.transitions import (
+    Action,
+    Guard,
+    State,
+    Transition,
+    Trigger,
+    lookup,
+)
 from earshot.storage.paths import render_session_id
 from earshot.storage.store import Store
 
@@ -33,6 +46,8 @@ log = logging.getLogger("earshot.statemachine")
 
 _IDLE_POLL_SECONDS = 0.05
 _COMMAND_TIMEOUT_SECONDS = 300.0  # generous: a stop waits for the encode to finish
+
+_COMMAND_TRIGGERS = {"start": Trigger.START, "stop": Trigger.STOP}
 
 
 @dataclass
@@ -70,16 +85,24 @@ class Controller:
         self._thread = threading.Thread(target=self._run, name="earshot-control", daemon=True)
 
         self._state_lock = threading.Lock()
-        self._state = "booting"
+        self._state: State = State.BOOTING
         self._session_id: int | None = None
         self._started_monotonic: float | None = None
         self._recorder: Recorder | None = None
         self._ready = threading.Event()
 
+        # Action name -> handler. The table names an Action; the Controller binds it.
+        self._actions: dict[Action, Callable[[Transition], Any]] = {
+            Action.BEGIN: self._do_begin,
+            Action.END: self._do_end,
+            Action.PREEMPT_RECORD: self._do_preempt_record,
+            Action.SHUTDOWN: self._do_shutdown,
+        }
+
     # -- lifecycle --------------------------------------------------------- #
 
     def start(self) -> None:
-        self.hal.led.set(led_state_for("booting"))
+        self.hal.led.set(led_state_for(State.BOOTING.value))
         self.hal.button.start()
         self._thread.start()
 
@@ -116,7 +139,7 @@ class Controller:
     def active_session_id(self) -> int | None:
         """The id of the in-progress recording, or None. Read by the API layer."""
         with self._state_lock:
-            return self._session_id if self._state == "recording" else None
+            return self._session_id if self._state is State.RECORDING else None
 
     def status(self) -> dict:
         with self._state_lock:
@@ -124,104 +147,119 @@ class Controller:
             session_id = self._session_id
             started = self._started_monotonic
         recording = None
-        if state == "recording" and session_id is not None and started is not None:
+        if state is State.RECORDING and session_id is not None and started is not None:
             recording = {
                 "session_id": render_session_id(session_id),
                 "elapsed": round(time.monotonic() - started, 3),
             }
         disk = self.store.disk_info()
-        led = led_state_for(state)
+        led = led_state_for(state.value)
         return {
-            "state": state,
+            "state": state.value,
             "led": {"rgb": list(led.rgb), "pattern": led.pattern.value},
             "recording": recording,
-            "processing": None,  # populated once the job worker lands
+            "processing": None,  # populated once the job worker lands (M6)
             "disk": {"used_percent": disk.used_percent, "blocked": disk.blocked},
         }
 
-    # -- internal state helpers ------------------------------------------- #
+    # -- transition plumbing ---------------------------------------------- #
 
-    def _set_state(self, state: str) -> None:
+    def _enter(self, state: State) -> None:
+        """Move to *state* and show its LED. The single place a resting state changes."""
         with self._state_lock:
             self._state = state
-        self.hal.led.set(led_state_for(state))
+        self.hal.led.set(led_state_for(state.value))
 
-    def _current_state(self) -> str:
-        with self._state_lock:
-            return self._state
+    def _advance(self, trigger: Trigger) -> None:
+        """Apply an internal, unconditional transition (boot/disk/completion).
+
+        The transition must exist and be actionless — a pure state move; anything
+        with an action goes through :meth:`_fire`."""
+        tr = lookup(self._state, trigger)
+        assert tr is not None and tr.action is None, f"no pure transition {self._state}+{trigger}"
+        self._enter(tr.target)
+
+    def _fire(self, trigger: Trigger, command: _Command | None = None) -> None:
+        """Route an external trigger (button gesture or web command) through the table."""
+        tr = lookup(self._state, trigger)
+        if tr is None:
+            if command is not None:
+                command.fail(self._illegal_command_error(self._state, trigger))
+            return
+        if tr.guard is Guard.DISK_OK and self.store.disk_info().blocked:
+            if command is not None:
+                command.fail(ApiError(409, "disk_full", "disk threshold reached; recording blocked"))
+            else:
+                log.info("start ignored: disk threshold reached")
+            return
+        if tr.action is None:
+            self._enter(tr.target)
+            if command is not None:
+                command.resolve(None)
+            return
+        # Action-bearing transitions manage their own (possibly multi-step) entries.
+        result = self._actions[tr.action](tr)
+        if command is not None:
+            command.resolve(result)
+
+    def _illegal_command_error(self, state: State, trigger: Trigger) -> ApiError:
+        if trigger is Trigger.START and state is State.RECORDING:
+            return ApiError(409, "already_recording", "a recording is already active")
+        if trigger is Trigger.STOP:
+            return ApiError(409, "not_recording", "nothing is recording")
+        return ApiError(409, "busy", "device is busy")
 
     # -- control loop ------------------------------------------------------ #
 
     def _run(self) -> None:
-        self._set_state("idle")
+        self._advance(Trigger.READY)  # BOOTING -> IDLE
         self._ready.set()
         while not self._stop.is_set():
-            state = self._current_state()
-            if state in ("idle", "disk_full"):
-                self._idle_tick()
-            elif state == "recording":
-                self._recording_tick()
-            else:
-                time.sleep(_IDLE_POLL_SECONDS)
+            self._tick()
 
-    def _idle_tick(self) -> None:
-        # Disk gating (rpi/specs/storage.md#disk-space-management).
-        blocked = self.store.disk_info().blocked
-        state = self._current_state()
-        if blocked and state != "disk_full":
-            self._set_state("disk_full")
-        elif not blocked and state == "disk_full":
-            self._set_state("idle")
+    def _tick(self) -> None:
+        state = self._state
 
-        # A queued command takes priority over a fresh button press.
+        # Pump capture while recording so a stop is honoured between blocks.
+        if state is State.RECORDING and self._recorder is not None:
+            pcm = self.hal.capture.read()
+            if pcm:
+                self._recorder.write(pcm)
+
+        # Sense the disk threshold (may itself end a recording).
+        self._sense_disk()
+        if self._state is not state:
+            return  # disk sensing changed state; re-evaluate next tick
+
+        # A queued web command takes priority over a fresh button press.
         cmd = self._take_command()
         if cmd is not None:
-            self._handle_idle_command(cmd)
+            self._fire(_COMMAND_TRIGGERS[cmd.kind], command=cmd)
+            self._reject_pending("device busy")
             return
 
-        event = self.hal.button.poll_event(timeout=_IDLE_POLL_SECONDS)
+        timeout = 0.0 if self._state is State.RECORDING else _IDLE_POLL_SECONDS
+        event = self.hal.button.poll_event(timeout=timeout)
         if event is None:
             return
         if event.value == "press":
-            try:
-                self._begin_recording()
-            except ApiError as exc:
-                log.info("button start ignored: %s", exc.message)
+            self._fire(Trigger.PRESS)
         elif event.value == "hold":
-            self._safe_shutdown()
+            self._fire(Trigger.HOLD)
+        self._reject_pending("device busy")
 
-    def _handle_idle_command(self, cmd: _Command) -> None:
-        if cmd.kind == "start":
-            try:
-                cmd.resolve(self._begin_recording())
-            except ApiError as exc:
-                cmd.fail(exc)
-        elif cmd.kind == "stop":
-            cmd.fail(ApiError(409, "not_recording", "nothing is recording"))
-
-    def _recording_tick(self) -> None:
-        pcm = self.hal.capture.read()
-        if pcm:
-            self._recorder.write(pcm)  # type: ignore[union-attr]
-
-        # Stop from the button (a HOLD is ignored while recording).
-        event = self.hal.button.poll_event(timeout=0)
-        if event is not None and event.value == "press":
-            self._end_recording()
+    def _sense_disk(self) -> None:
+        state = self._state
+        blocked = self.store.disk_info().blocked
+        if not blocked:
+            if state is State.DISK_FULL:
+                self._advance(Trigger.DISK_CLEARED)  # DISK_FULL -> IDLE
             return
-
-        cmd = self._take_command()
-        if cmd is not None:
-            if cmd.kind == "stop":
-                cmd.resolve(self._end_recording())
-            elif cmd.kind == "start":
-                cmd.fail(ApiError(409, "already_recording", "a recording is already active"))
-            return
-
-        # Disk threshold reached mid-session (rpi/specs/recording.md).
-        if self.store.disk_info().blocked:
+        if state is State.IDLE:
+            self._advance(Trigger.DISK_BLOCKED)      # IDLE -> DISK_FULL
+        elif state is State.RECORDING:
             log.warning("disk threshold reached mid-session; stopping recording")
-            self._end_recording()
+            self._fire(Trigger.DISK_BLOCKED)         # RECORDING -> FINALIZING (END)
 
     def _take_command(self) -> _Command | None:
         try:
@@ -229,12 +267,20 @@ class Controller:
         except queue.Empty:
             return None
 
-    # -- transitions ------------------------------------------------------- #
+    def _reject_pending(self, message: str) -> None:
+        """Fail any start/stop that queued during a synchronous action (finalize).
 
-    def _begin_recording(self) -> dict:
-        if self.store.disk_info().blocked:
-            raise ApiError(409, "disk_full", "disk threshold reached; recording blocked")
+        Actions block the loop while they run, so commands that arrive mid-encode
+        are "during post-recording processing" and are rejected, per FR-3."""
+        while True:
+            cmd = self._take_command()
+            if cmd is None:
+                return
+            cmd.fail(ApiError(409, "busy", message))
 
+    # -- actions ----------------------------------------------------------- #
+
+    def _do_begin(self, tr: Transition) -> dict:
         session_id = self.store.allocate_session()
         recorder = Recorder(
             self.store.session_dir(session_id),
@@ -244,25 +290,33 @@ class Controller:
         )
         recorder.open()
         self.hal.capture.start()
-
         with self._state_lock:
             self._session_id = session_id
             self._recorder = recorder
             self._started_monotonic = time.monotonic()
-        self._set_state("recording")
-        self.hal.led.set(RECORDING)
+        self._enter(tr.target)  # RECORDING (red)
         log.info("recording started: %s", render_session_id(session_id))
-
         row = self.store.db.get_session(session_id)
         return self.store.session_detail_api(row, active_id=session_id)
 
-    def _end_recording(self) -> dict:
+    def _do_preempt_record(self, tr: Transition) -> dict:
+        # FR-2: a local job yields to recording — cancel it and requeue to the front.
+        self._preempt_local_job()
+        return self._do_begin(tr)
+
+    def _preempt_local_job(self) -> None:
+        """Cancel a running local job and return it to the front of the queue.
+
+        A no-op until the job worker exists (M6); the transition is already in the
+        table so recording can preempt local processing the moment it lands."""
+        return None
+
+    def _do_end(self, tr: Transition) -> dict:
+        self._enter(tr.target)  # FINALIZING (amber)
         with self._state_lock:
             session_id = self._session_id
             recorder = self._recorder
         assert session_id is not None and recorder is not None
-
-        self._set_state("finalizing")
         self.hal.capture.stop()
 
         min_seconds = self.config.recording.min_duration_seconds
@@ -273,10 +327,9 @@ class Controller:
             )
             recorder.discard()
             self.store.delete_session(session_id)
-            self.hal.led.set(DISCARDED)
             self._reset_recording_state()
-            self._reject_pending("device busy finalizing")
-            self._set_state("idle")
+            self.hal.led.set(DISCARDED)          # transient double-flash
+            self._advance(Trigger.TOO_SHORT)     # FINALIZING -> IDLE
             return {"discarded": True, "reason": "too_short"}
 
         try:
@@ -288,10 +341,8 @@ class Controller:
         row = self.store.db.get_session(session_id)
         detail = self.store.session_detail_api(row, active_id=None)
 
-        self.hal.led.set(READY)
         self._reset_recording_state()
-        self._reject_pending("device busy finalizing")
-        self._set_state("idle")
+        self._advance(Trigger.FINALIZED)         # FINALIZING -> IDLE (green)
         log.info("recording finalized: %s", render_session_id(session_id))
         return detail
 
@@ -301,18 +352,16 @@ class Controller:
             self._recorder = None
             self._started_monotonic = None
 
-    def _reject_pending(self, message: str) -> None:
-        """Reject any start/stop that arrived during the post-recording window."""
-        while True:
-            cmd = self._take_command()
-            if cmd is None:
-                return
-            cmd.fail(ApiError(409, "busy", message))
-
-    def _safe_shutdown(self) -> None:
+    def _do_shutdown(self, tr: Transition) -> None:
+        # Terminal on real hardware: the process is powered off and never returns.
+        # We do not durably report `shutting_down` (not an api.md DeviceState); the
+        # LED shows it, and if shutdown_fn returns (stub/no-op or failure) we restore
+        # the resting LED and stay put.
         log.info("safe shutdown requested (button hold while idle)")
         self.hal.led.set(SHUTTING_DOWN)
         try:
             self._shutdown_fn()
         except Exception:  # pragma: no cover - shutdown is best-effort
             log.exception("shutdown failed")
+        self.hal.led.set(led_state_for(self._state.value))  # not powered off: restore
+        return None

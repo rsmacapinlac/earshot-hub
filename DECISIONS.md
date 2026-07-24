@@ -90,6 +90,40 @@ The spec always wins where it speaks. Nothing here overrides `rpi/specs/`.
   max explicitly. This path was first exercised by reconciliation (adoption), so the latent
   bug surfaced in M4.
 
+- **State machine is an explicit table (M5).** Transitions live in
+  `earshot/statemachine/transitions.py` as `TABLE[(State, Trigger)] -> Transition(target,
+  guard, action)`; the Controller routes every input through it. An **absent** `(state,
+  trigger)` pair means the trigger is ignored in that state — the spec's usual phrasing for
+  its prohibitions (holds ignored while recording, presses ignored while finalizing). The
+  table is verified against an independent transcription of `state-machine.md` in the tests,
+  so drift in either fails.
+
+- **`shutting_down` is terminal and never reported (M5).** It is not an api.md `DeviceState`,
+  so it is deliberately absent from the OpenAPI enum and from `GET /v1/status`. The safe-
+  shutdown action shows the white fade LED and calls the shutdown hook; on real hardware the
+  process is powered off and never returns. If the hook is a no-op (stub) or fails, the
+  device restores its resting LED and stays put, so `status` never surfaces an unreportable
+  state.
+
+- **Disk gating is a guard, not a duplicated branch (M5).** `START`/`PRESS` from both `idle`
+  and `disk_full` route through the `disk_ok` guard. A blocked disk fails the guard: a button
+  press is ignored, a web `start` returns the `disk_full` error (409). Recording can never be
+  entered without passing this guard (asserted in tests).
+
+- **`processing` = a local job; preemption falls out of the table (M5).** Because the device
+  is only `processing` while local work runs, the FR-2 preemption rule is just
+  `PROCESSING + START/PRESS -> RECORDING` via a `preempt_and_record` action (cancel + requeue
+  the local job to the front), while a service job — never a device state — leaves the
+  ordinary `IDLE + START` path untouched. The job triggers (`job_started`/`job_finished`) and
+  the preempt hook are encoded and tested now; the Controller starts emitting them with the
+  job worker (M6).
+
+- **Illegal-command error mapping (M5).** When a web command has no transition in the current
+  state: `start` while `recording` → `already_recording`; `stop` while not recording →
+  `not_recording`; anything else (e.g. during `finalizing`) → `busy`. All 409. Commands that
+  queue during a synchronous finalize are rejected `busy`, honouring "ignored during
+  post-recording processing."
+
 ## References
 
 - **Design mockup imported.** The "Earshot Raspberry Pi UI" Claude Design project was
