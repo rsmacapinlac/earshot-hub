@@ -21,7 +21,7 @@ dependencies = [
 transcription = ["faster-whisper>=1.0"]
 # Pi hardware libs that are pip-only. gpiozero/spidev come from apt (the venv is made
 # with --system-site-packages); apa102-pi drives the APA102 LED chain.
-pi = ["apa102-pi>=3.0"]
+pi = ["apa102-pi>=2.5"]
 dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
