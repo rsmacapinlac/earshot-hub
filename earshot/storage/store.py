@@ -109,6 +109,9 @@ class Store:
 
     def set_name(self, session_id: int, name: str | None) -> None:
         self.db.update_session(session_id, name=name)
+        # Renaming rewrites the transcript.md header in place (rpi/specs/processing.md#fr-16).
+        if self.has_transcript(session_id):
+            self._render_transcript(session_id, self.read_current_segments(session_id))
         if self.m4a_path(session_id).exists():
             self.write_status_json(session_id)
 

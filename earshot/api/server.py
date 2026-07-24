@@ -12,20 +12,23 @@ import json
 import logging
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from earshot.api.errors import ApiError
 from earshot.api import validation
 from earshot.jobs.serialize import job_api
-from earshot.storage.paths import parse_session_id
+from earshot.storage.paths import parse_session_id, render_session_id
 
 log = logging.getLogger("earshot.api")
 
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
 
 def create_app(controller, store, config, worker=None, service=None) -> Flask:
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=None)
     app.url_map.strict_slashes = False
 
     # ------------------------------------------------------------------ #
@@ -95,21 +98,33 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
 
     @app.get("/v1/events")
     def get_events():
+        def _fingerprint(obj) -> str:
+            return json.dumps(obj, sort_keys=True)
+
         def stream():
-            last = None
             # On connect: one state event with the current status.
             snapshot = controller.status()
             yield _sse("state", snapshot)
-            last = json.dumps(snapshot, sort_keys=True)
+            last_state = _fingerprint(snapshot)
+            last_sessions = _fingerprint(store.list_sessions_api(controller.active_session_id))
+            last_jobs = _fingerprint([job_api(r) for r in store.db.list_jobs()])
             while True:
                 time.sleep(1.0)
                 snapshot = controller.status()
-                current = json.dumps(snapshot, sort_keys=True)
-                if current != last:
+                cur_state = _fingerprint(snapshot)
+                if cur_state != last_state:
                     yield _sse("state", snapshot)
-                    last = current
-                else:
-                    yield ": keep-alive\n\n"
+                    last_state = cur_state
+                # Change hints: the client refetches the collection (rpi/specs/api.md).
+                cur_sessions = _fingerprint(store.list_sessions_api(controller.active_session_id))
+                if cur_sessions != last_sessions:
+                    yield _sse("sessions-changed", {})
+                    last_sessions = cur_sessions
+                cur_jobs = _fingerprint([job_api(r) for r in store.db.list_jobs()])
+                if cur_jobs != last_jobs:
+                    yield _sse("jobs-changed", {})
+                    last_jobs = cur_jobs
+                yield ": keep-alive\n\n"
 
         return Response(stream(), mimetype="text/event-stream")
 
@@ -126,6 +141,39 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
         _, row = session_row_or_404(id_str)
         return respond(
             store.session_detail_api(row, controller.active_session_id), "SessionDetail"
+        )
+
+    @app.patch("/v1/sessions/<id_str>")
+    def rename_session(id_str: str):
+        session_id, _ = session_row_or_404(id_str)
+        body = request_json("NameUpdate")
+        store.set_name(session_id, body["name"])  # rewrites transcript.md header if present
+        updated = store.db.get_session(session_id)
+        return respond(store.session_detail_api(updated, controller.active_session_id), "SessionDetail")
+
+    @app.delete("/v1/sessions/<id_str>")
+    def delete_session(id_str: str):
+        session_id, _ = session_row_or_404(id_str)
+        if controller.active_session_id == session_id:
+            raise ApiError(409, "recording", "cannot delete a session while it is recording")
+        active = store.db.active_job_for_session(session_id)
+        if active is not None and worker is not None:
+            worker.cancel_running(int(active["id"]))  # in-flight job discarded
+        store.delete_session(session_id)
+        return ("", 204)
+
+    @app.get("/v1/sessions/<id_str>/audio")
+    def get_audio(id_str: str):
+        session_id, row = session_row_or_404(id_str)
+        m4a = store.m4a_path(session_id)
+        if not m4a.exists():
+            raise ApiError(404, "not_finalized", "session has no audio yet")
+        download = "download" in request.args
+        name = row["name"] or render_session_id(session_id)
+        # conditional=True → ETag + Range support (206 on a ranged request), for seeking.
+        return send_from_directory(
+            m4a.parent, m4a.name, mimetype="audio/mp4", conditional=True,
+            as_attachment=download, download_name=f"{name}.m4a",
         )
 
     @app.get("/v1/sessions/<id_str>/transcript")
@@ -259,6 +307,18 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
         if service is None:
             return {"configured": False, "url": None, "reachable": False, "capabilities": None}
         return service.status()
+
+    # ------------------------------------------------------------------ #
+    # Web UI — vanilla assets served statically (rpi/requirements/web-ui)
+    # ------------------------------------------------------------------ #
+
+    @app.get("/")
+    def index():
+        return send_from_directory(WEB_DIR, "index.html")
+
+    @app.get("/app.js")
+    def app_js():
+        return send_from_directory(WEB_DIR, "app.js", mimetype="text/javascript")
 
     return app
 

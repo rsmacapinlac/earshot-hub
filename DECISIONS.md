@@ -196,6 +196,29 @@ The spec always wins where it speaks. Nothing here overrides `rpi/specs/`.
   endpoints: `GET/PUT/DELETE /v1/service`, `GET /v1/sessions/{id}/speakers`,
   `PUT .../speakers/{label}`, `GET .../speakers/{label}/sample`.
 
+- **Web UI: vanilla, no build, offline-first (M8).** `earshot/web/{index.html,app.js}` served
+  statically by the app (`GET /`, `GET /app.js`). No framework and **no external assets** —
+  the mockup's Google Fonts are dropped for system font stacks, because a desk appliance may
+  have no internet. The three views (Sessions / Session detail / Settings), the delete and
+  transcribe/diarize modals, the live status header, and a theme toggle (persisted to
+  `localStorage`, defaults to `prefers-color-scheme`) all bind to `/v1`.
+
+- **Live updates via SSE change hints (M8).** `/v1/events` now also emits `sessions-changed`
+  and `jobs-changed` (a fingerprint diff in the stream loop) alongside `state`; the client
+  refetches the affected collection. Re-renders **preserve input focus/caret** (via a
+  `data-focus` key) so the name, speaker-name, and service-URL fields survive a live refresh
+  while typing; mutating inputs debounce their PATCH/PUT.
+
+- **Native `<audio controls>` for playback (M8).** Reliable and accessible seeking over the
+  `Range`-capable `/audio` endpoint, rather than a bespoke scrubber. Speaker samples play via
+  a transient `Audio()` object.
+
+- **New UI-facing endpoints (M8).** `GET /v1/sessions/{id}/audio` (Range → 206, `?download`
+  sets `Content-Disposition: attachment` named after the session); `PATCH /v1/sessions/{id}`
+  (rename; rewrites the `transcript.md` header in place); `DELETE /v1/sessions/{id}` (**409
+  while recording**, cancels any in-flight job, then removes the directory + row). Diarize is
+  offered in the UI only when the service reports the capability.
+
 ## References
 
 - **Design mockup imported.** The "Earshot Raspberry Pi UI" Claude Design project was
