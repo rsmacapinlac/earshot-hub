@@ -92,7 +92,11 @@ def main() -> None:
         level=os.environ.get("EARSHOT_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    app = build_application()
+    from earshot.power import select_shutdown_fn
+
+    config = Config.load()
+    # Real power-off only on the pi backend; never on the stub (dev machine safe).
+    app = build_application(config=config, shutdown_fn=select_shutdown_fn(config))
     app.start()
 
     def _handle_signal(signum, _frame):

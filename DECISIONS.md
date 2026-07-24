@@ -219,6 +219,33 @@ The spec always wins where it speaks. Nothing here overrides `rpi/specs/`.
   while recording**, cancels any in-flight job, then removes the directory + row). Diarize is
   offered in the UI only when the service reports the capability.
 
+- **Installer derives identity from the checkout (M9).** `install_dir` is wherever the repo
+  was cloned (derived from the script path), not a hardcoded `~/earshot` — reconciling the
+  spec's stale clone target. `install_user` comes from `$SUDO_USER`/`$USER` (never root);
+  `data_dir` defaults to `~/earshot-data`. `config.toml` is written only if absent, so a
+  re-run (`git pull && install.sh`) never clobbers a hand-edited config.
+
+- **WM8960 ALC is applied at boot, not during install (M9).** The seeed-voicecard driver does
+  not appear in ALSA until after a reboot, so the installer cannot run `amixer` in the same
+  pass. Instead it installs a oneshot `earshot-alc.service` (`Before=earshot.service`,
+  `ConditionPathExists=/proc/asound/seeed2micvoicec`) that applies the speech preset and
+  persists it to `/etc/voicecard/wm8960_asound.state` each boot — idempotent and reboot-safe.
+  `ALC Max Gain = 5` ships as the v1 provisional value.
+
+- **systemd unit is installer-rendered (M9).** `install.sh` writes `earshot.service` with the
+  resolved user/dirs and the full contract: `Group=audio`, `SupplementaryGroups=gpio spi i2c
+  audio`, `AmbientCapabilities=CAP_SYS_BOOT`, `ReadWritePaths=<data_dir>` (checkout read-only),
+  `NoNewPrivileges`/`PrivateTmp`/`ProtectSystem=full`, `Restart=on-failure`,
+  `PYTHONUNBUFFERED=1`. The seeed-voicecard driver is cloned+installed (HinTak fork, respeaker
+  fallback) and the boot overlay lines are appended idempotently.
+
+- **Safe shutdown wired only on the pi backend (M9).** `earshot/power.py` powers off via
+  `reboot(2)` `LINUX_REBOOT_CMD_POWER_OFF` (needs `CAP_SYS_BOOT`, granted by the unit) with a
+  `systemctl poweroff --no-wall` fallback. `select_shutdown_fn` returns the real callable only
+  when the resolved HAL backend is `pi`, so running the stub on a workstation can never power
+  off the developer's machine. Hardware-only behaviour is validated in
+  `docs/ON_DEVICE_SMOKE.md`, never faked as passing.
+
 ## References
 
 - **Design mockup imported.** The "Earshot Raspberry Pi UI" Claude Design project was
