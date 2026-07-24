@@ -32,10 +32,12 @@ CONFIG="$DATA_DIR/config.toml"
 VENV="$INSTALL_DIR/.venv"
 
 WITH_TRANSCRIPTION=1
+SKIP_AUDIO_DRIVER=0
 ASSUME_YES=0
 for arg in "$@"; do
   case "$arg" in
     --no-transcription) WITH_TRANSCRIPTION=0 ;;
+    --no-audio-driver) SKIP_AUDIO_DRIVER=1 ;;
     --yes|-y) ASSUME_YES=1 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
@@ -111,17 +113,26 @@ chown -R "$INSTALL_USER":"$INSTALL_USER" "$DATA_DIR"
 say "Installing system packages (apt)"
 sudo apt-get update
 sudo apt-get -y upgrade
+# Required — the app, the AAC encode, and ALSA capture tooling. A failure here
+# is fatal (the device cannot run without these).
 sudo apt-get install -y \
   git python3 python3-venv python3-dev build-essential \
-  ffmpeg alsa-utils \
-  libgpiod2 python3-libgpiod \
-  dkms i2c-tools
+  ffmpeg alsa-utils i2c-tools dkms
+# Hardware Python libs for the pi backend (GPIO17 button, APA102 SPI LEDs).
+# Installed from apt — they ship there on Raspberry Pi OS, and the venv is created
+# with --system-site-packages so it can import them. Best-effort: a rename on a
+# future OS warns rather than aborting the whole install.
+for pkg in python3-gpiozero python3-spidev python3-lgpio libgpiod3 gpiod; do
+  sudo apt-get install -y "$pkg" || echo "  (optional) could not install $pkg — verify for the pi backend"
+done
 
 # ---- ReSpeaker (seeed-voicecard) driver -----------------------------------
-say "Installing the ReSpeaker (seeed-voicecard) audio driver"
-if arecord -l 2>/dev/null | grep -q seeed2micvoicec; then
-  echo "  seeed2micvoicec already present — skipping driver build"
+if [[ "$SKIP_AUDIO_DRIVER" == 1 ]]; then
+  say "Skipping the ReSpeaker driver (--no-audio-driver) — capture will not work until it is installed"
+elif arecord -l 2>/dev/null | grep -q seeed2micvoicec; then
+  say "seeed2micvoicec already present — skipping driver build"
 else
+  say "Installing the ReSpeaker (seeed-voicecard) audio driver"
   SEEED_SRC="$INSTALL_HOME/seeed-voicecard"
   if [[ ! -d "$SEEED_SRC" ]]; then
     git clone --depth 1 https://github.com/HinTak/seeed-voicecard.git "$SEEED_SRC" \
@@ -145,7 +156,9 @@ ensure_line "dtoverlay=seeed-2mic-voicecard"
 
 # ---- Python venv + dependencies -------------------------------------------
 say "Creating the Python venv and installing earshot"
-python3 -m venv "$VENV"
+# --system-site-packages so the venv can import the apt-provided GPIO/SPI libs
+# (gpiozero, spidev, lgpio); earshot and its PyPI deps install on top.
+python3 -m venv --system-site-packages "$VENV"
 "$VENV/bin/pip" install --upgrade pip
 if [[ "$WITH_TRANSCRIPTION" == 1 ]]; then
   "$VENV/bin/pip" install -e "$INSTALL_DIR[transcription]"
