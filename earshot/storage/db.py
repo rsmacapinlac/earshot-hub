@@ -270,15 +270,19 @@ class Database:
         )
 
     def requeue_job(self, job_id: int, *, attempts: int | None = None,
-                    last_error: str | None = None) -> None:
+                    last_error: str | None = None, keep_remote: bool = False) -> None:
         """Return a job to the queue, keeping its id (so it stays in order/front).
 
-        Used both for a retry (pass the bumped *attempts* and *last_error*) and for
-        preemption/crash recovery (pass neither — not a failure)."""
+        Used for a retry (pass the bumped *attempts*/*last_error*) and for
+        preemption/crash recovery (pass neither — not a failure). *keep_remote*
+        preserves ``remote_job_id`` so an unreachable service job resumes by polling
+        rather than resubmitting (rpi/specs/processing.md#crash-resilience)."""
         fields: dict[str, Any] = {
             "state": "queued", "route": None, "started_at": None,
-            "finished_at": None, "stage": None, "progress": None, "remote_job_id": None,
+            "finished_at": None, "stage": None, "progress": None,
         }
+        if not keep_remote:
+            fields["remote_job_id"] = None
         if attempts is not None:
             fields["attempts"] = attempts
         if last_error is not None:
@@ -288,12 +292,13 @@ class Database:
     def reset_running_jobs(self) -> int:
         """Return every ``running`` job to ``queued`` on startup (crash resilience).
 
-        M6 is local-only, so all running jobs simply re-run; the service-resume
-        refinement (keep a ``remote_job_id`` and poll) lands in M7."""
+        ``remote_job_id`` is **preserved**: a service job that was in flight resumes
+        by polling that id rather than being resubmitted, while a local job (which has
+        none) simply re-runs (rpi/specs/processing.md#crash-resilience)."""
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE jobs SET state='queued', route=NULL, started_at=NULL, "
-                "stage=NULL, progress=NULL, remote_job_id=NULL WHERE state='running'"
+                "stage=NULL, progress=NULL WHERE state='running'"
             )
             self._conn.commit()
             return cur.rowcount

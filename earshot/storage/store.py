@@ -31,6 +31,15 @@ class DiskInfo:
     blocked: bool
 
 
+def _labels_in_order(segments) -> list[str]:
+    """Distinct speaker labels in first-appearance order (Speaker 1, 2, …)."""
+    seen: list[str] = []
+    for s in segments:
+        if s.speaker and s.speaker not in seen:
+            seen.append(s.speaker)
+    return seen
+
+
 class Store:
     def __init__(self, config: Config, db: Database):
         self.config = config
@@ -115,8 +124,6 @@ class Store:
         """
         import json
 
-        from earshot.jobs.transcript import render
-
         sdir = self.session_dir(session_id)
         raw_name = TRANSCRIPT_DIARIZED_RAW if diarized else TRANSCRIPT_RAW
         payload = [s.api() for s in segments]
@@ -124,23 +131,39 @@ class Store:
 
         if diarized:
             self.db.update_session(session_id, diarized=1)
-            labels = sorted({s.speaker for s in segments if s.speaker})
+            labels = _labels_in_order(segments)
             self.db.replace_speakers(session_id, labels)
         else:
             self.diarized_raw_path(session_id).unlink(missing_ok=True)
             self.db.clear_speakers(session_id)
             self.db.update_session(session_id, diarized=0)
 
+        self._render_transcript(session_id, list(segments))
+        self.write_status_json(session_id)
+
+    def assign_speaker(self, session_id: int, label: str, name: str | None) -> None:
+        """Assign/clear a speaker name and substitute it throughout ``transcript.md``.
+
+        Local relabelling only — nothing is sent anywhere
+        (rpi/requirements/web-ui/name-speakers.md)."""
+        self.db.set_speaker_name(session_id, label, name)
+        if self.is_diarized(session_id):
+            self._render_transcript(session_id, self.read_current_segments(session_id))
+        self.write_status_json(session_id)
+
+    def _render_transcript(self, session_id: int, segments: list) -> None:
+        from earshot.jobs.transcript import render
+
         row = self.db.get_session(session_id)
-        header = row["name"] or render_session_id(session_id)
+        names = {s["label"]: s["name"] for s in self.db.get_speakers(session_id) if s["name"]}
         md = render(
-            header=header,
+            header=row["name"] or render_session_id(session_id),
             session_dirname=render_session_id(session_id),
             duration=row["duration"] or 0.0,
-            segments=list(segments),
+            segments=segments,
+            speaker_names=names,
         )
-        self._atomic_write(sdir / TRANSCRIPT_MD, md)
-        self.write_status_json(session_id)
+        self._atomic_write(self.session_dir(session_id) / TRANSCRIPT_MD, md)
 
     def read_current_segments(self, session_id: int) -> list:
         """The current transcript's segments (diarized raw if diarized, else raw)."""
@@ -226,19 +249,36 @@ class Store:
 
         session_id = int(row["id"])
         base = self.session_api(row, active_id)
-        speakers = [
-            {"label": s["label"], "name": s["name"],
-             "segments": self._segment_count(session_id, s["label"])}
-            for s in self.db.get_speakers(session_id)
-        ]
         job_row = self.db.active_job_for_session(session_id) or self.db.latest_job_for_session(session_id)
-        base["speakers"] = speakers
+        base["speakers"] = self.speakers_api(session_id)["speakers"]
         base["job"] = job_api(job_row) if job_row is not None else None
         return base
 
+    def speakers_api(self, session_id: int) -> dict[str, Any]:
+        return {
+            "speakers": [
+                {"label": s["label"], "name": s["name"],
+                 "segments": self._segment_count(session_id, s["label"])}
+                for s in self.db.get_speakers(session_id)
+            ]
+        }
+
     def _segment_count(self, session_id: int, label: str) -> int:
-        # Segment counts come from the diarized raw JSON; 0 until that lands.
-        return 0
+        return sum(1 for s in self.read_current_segments(session_id) if s.speaker == label)
+
+    def speaker_sample(self, session_id: int, label: str, *, max_seconds: float = 6.0) -> bytes:
+        """A short audio sample of *label*'s voice, cut from ``session.m4a`` for the
+        user to listen to before naming (rpi/specs/api.md). Returns m4a bytes, or
+        raises KeyError if the label has no segments."""
+        segs = [s for s in self.read_current_segments(session_id) if s.speaker == label]
+        if not segs:
+            raise KeyError(label)
+        seg = max(segs, key=lambda s: s.end - s.start)  # the clearest (longest) turn
+        start = max(0.0, seg.start)
+        duration = min(max_seconds, max(1.0, seg.end - seg.start))
+        from earshot.recording.encode import cut_sample
+
+        return cut_sample(self.m4a_path(session_id), start=start, duration=duration)
 
     def list_sessions_api(self, active_id: int | None) -> dict[str, Any]:
         rows = [r for r in self.db.list_sessions() if not r["missing"]]

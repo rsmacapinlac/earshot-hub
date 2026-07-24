@@ -169,6 +169,13 @@ class Controller:
         self._commands.put(cmd)
         cmd.done.wait(_COMMAND_TIMEOUT_SECONDS)
 
+    def set_processing(self, snapshot: dict | None) -> None:
+        """Populate ``status.processing`` for a **service** job without changing the
+        device state — a service job runs on another machine, so the device stays
+        idle/recording (LED unchanged) while the UI surfaces the job (DECISIONS.md)."""
+        with self._state_lock:
+            self._processing = snapshot
+
     def status(self) -> dict:
         with self._state_lock:
             state = self._state

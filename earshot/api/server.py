@@ -24,7 +24,7 @@ from earshot.storage.paths import parse_session_id
 log = logging.getLogger("earshot.api")
 
 
-def create_app(controller, store, config, worker=None) -> Flask:
+def create_app(controller, store, config, worker=None, service=None) -> Flask:
     app = Flask(__name__)
     app.url_map.strict_slashes = False
 
@@ -65,9 +65,8 @@ def create_app(controller, store, config, worker=None) -> Flask:
         return session_id, row
 
     def diarize_available() -> bool:
-        # Diarization needs a processing service reporting the capability; there is
-        # no service client until M7, so it is unavailable on the standalone device.
-        return False
+        # Diarization needs a processing service that reports the capability.
+        return service is not None and service.diarize_available()
 
     def enqueue(session_id: int, kind: str) -> dict:
         if kind == "diarize" and not diarize_available():
@@ -142,6 +141,36 @@ def create_app(controller, store, config, worker=None) -> Flask:
         return app.response_class(md, mimetype="text/markdown")
 
     # ------------------------------------------------------------------ #
+    # Speakers (diarized sessions — rpi/requirements/web-ui/name-speakers.md)
+    # ------------------------------------------------------------------ #
+
+    @app.get("/v1/sessions/<id_str>/speakers")
+    def list_speakers(id_str: str):
+        session_id, _ = session_row_or_404(id_str)
+        return respond(store.speakers_api(session_id), "SpeakerList")
+
+    @app.put("/v1/sessions/<id_str>/speakers/<label>")
+    def name_speaker(id_str: str, label: str):
+        session_id, _ = session_row_or_404(id_str)
+        if not _has_speaker(session_id, label):
+            raise ApiError(404, "not_found", f"no speaker {label!r} in this session")
+        body = request_json("NameUpdate")
+        store.assign_speaker(session_id, label, body["name"])
+        return respond(store.speakers_api(session_id), "SpeakerList")
+
+    @app.get("/v1/sessions/<id_str>/speakers/<label>/sample")
+    def speaker_sample(id_str: str, label: str):
+        session_id, _ = session_row_or_404(id_str)
+        try:
+            audio = store.speaker_sample(session_id, label)
+        except KeyError:
+            raise ApiError(404, "not_found", f"no speaker {label!r} in this session")
+        return app.response_class(audio, mimetype="audio/mp4")
+
+    def _has_speaker(session_id: int, label: str) -> bool:
+        return any(s["label"] == label for s in store.db.get_speakers(session_id))
+
+    # ------------------------------------------------------------------ #
     # Recording control
     # ------------------------------------------------------------------ #
 
@@ -204,6 +233,32 @@ def create_app(controller, store, config, worker=None) -> Flask:
             worker.cancel_running(job_id)
         # done/failed/cancelled: already terminal — cancellation is idempotent.
         return ("", 204)
+
+    # ------------------------------------------------------------------ #
+    # Processing service (the one operational connection — rpi/specs/api.md)
+    # ------------------------------------------------------------------ #
+
+    @app.get("/v1/service")
+    def get_service():
+        return respond(_service_status(), "Service")
+
+    @app.put("/v1/service")
+    def put_service():
+        body = request_json("ServiceUpdate")
+        if service is None:
+            raise ApiError(503, "unavailable", "service configuration unavailable")
+        return respond(service.set_url(body["url"]), "Service")
+
+    @app.delete("/v1/service")
+    def delete_service():
+        if service is not None:
+            service.clear()
+        return ("", 204)
+
+    def _service_status() -> dict:
+        if service is None:
+            return {"configured": False, "url": None, "reachable": False, "capabilities": None}
+        return service.status()
 
     return app
 

@@ -159,6 +159,43 @@ The spec always wins where it speaks. Nothing here overrides `rpi/specs/`.
   diarized raw, clears speaker labels), which is how a diarized session is reverted even
   locally.
 
+- **Service client is stdlib-only (M7).** `ServiceClient` speaks the async job API over
+  `urllib` with a hand-rolled `multipart/form-data` encoder — no `requests`/`httpx` dependency
+  (respects the minimal-deps ADR). A connection error, timeout, or non-JSON reply raises
+  `ServiceUnreachable`; a 404 raises `ServiceJobGone`.
+
+- **Service jobs never change device state (M7).** A service job runs on another machine, so
+  the device stays `idle` (LED green) — or `recording` — while `status.processing` surfaces the
+  remote stage/progress. Only a **local** job takes the `processing` state/LED. This is why a
+  recording does not preempt a service job (the loop only preempts from `processing`).
+
+- **Route decision & unreachable handling (M7).** Decided at dequeue: a job with a
+  `remote_job_id` resumes on the service (never resubmitted elsewhere); `diarize` is
+  service-only; `transcribe` uses a reachable service else falls back to **local**. A service
+  that becomes unreachable mid-job requeues the job with **no attempt bump** (keeping
+  `remote_job_id` to resume) — a LAN outage never burns a session's retry budget. `diarize`,
+  having no local path, simply waits while the service is down.
+
+- **Crash resume for service jobs (M7).** `reset_running_jobs` now **preserves**
+  `remote_job_id`, so a service job left `running` by a crash resumes by polling that id rather
+  than resubmitting; a 404 (`ServiceJobGone`) drops the id and resubmits; a local job (no id)
+  re-runs.
+
+- **Live service config persisted to `config.toml` (M7).** `PUT /v1/service` applies
+  immediately and persists `[processing].service_url` via a **targeted** in-place edit that
+  preserves every other line and comment (the one config value the API may write). The target
+  is `data_dir/config.toml` (not the env-derived default path). Capabilities and reachability
+  come from the service's `/v1/health`, not from the URL merely being set — so
+  `diarize` enqueues return **409 `diarize_unavailable`** unless the service reports
+  `diarize: true`.
+
+- **Speaker naming is local relabelling (M7).** `PUT .../speakers/{label}` (404 if the label
+  isn't a detected speaker) persists the name and **re-renders `transcript.md`** substituting
+  the name for the label; clearing it reverts to `Speaker N`. Nothing is sent anywhere. The
+  voice `sample` is cut from `session.m4a` with ffmpeg from the speaker's longest turn. New M7
+  endpoints: `GET/PUT/DELETE /v1/service`, `GET /v1/sessions/{id}/speakers`,
+  `PUT .../speakers/{label}`, `GET .../speakers/{label}/sample`.
+
 ## References
 
 - **Design mockup imported.** The "Earshot Raspberry Pi UI" Claude Design project was

@@ -152,6 +152,25 @@ class Config:
         cfg.validate()
         return cfg
 
+    # -- Live service-URL persistence -------------------------------------- #
+
+    def persist_service_url(self, url: str) -> None:
+        """Write ``[processing].service_url`` to ``config.toml`` in place.
+
+        This is the single config value the HTTP API may change (rpi/specs/
+        api.md#scope). The edit is targeted — it preserves every other line,
+        including comments and unrelated sections — so a hand-maintained
+        ``config.toml`` is not clobbered by an operational URL change.
+        """
+        path = self.source_path or (self.data_dir / "config.toml")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        current = path.read_text(encoding="utf-8") if path.exists() else ""
+        updated = _set_service_url(current, url)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(updated, encoding="utf-8")
+        tmp.replace(path)
+        self.source_path = path
+
     # -- Validation -------------------------------------------------------- #
 
     def validate(self) -> None:
@@ -171,6 +190,30 @@ class Config:
             raise ConfigError("web.port must be in (0, 65535]")
         if self.processing.max_failures < 0:
             raise ConfigError("processing.max_failures must be >= 0")
+
+
+def _set_service_url(text: str, url: str) -> str:
+    """Return *text* with ``[processing].service_url`` set to *url*, in place."""
+    value = 'service_url = "{}"'.format(url.replace("\\", "\\\\").replace('"', '\\"'))
+    lines = text.splitlines()
+
+    header = next((i for i, ln in enumerate(lines) if ln.strip() == "[processing]"), None)
+    if header is None:
+        base = text if (text == "" or text.endswith("\n")) else text + "\n"
+        sep = "" if text == "" else "\n"
+        return f"{base}{sep}[processing]\n{value}\n"
+
+    end = len(lines)
+    for j in range(header + 1, len(lines)):
+        if lines[j].lstrip().startswith("["):
+            end = j
+            break
+    for j in range(header + 1, end):
+        if lines[j].split("#", 1)[0].strip().startswith("service_url"):
+            lines[j] = value
+            return "\n".join(lines) + "\n"
+    lines.insert(header + 1, value)
+    return "\n".join(lines) + "\n"
 
 
 def _build_section(name: str, section_cls: type, values: Any):

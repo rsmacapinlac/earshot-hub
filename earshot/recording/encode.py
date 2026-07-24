@@ -55,6 +55,29 @@ def encode_session(
         raise EncodeError(f"ffmpeg failed ({proc.returncode}): {proc.stderr.strip()}")
 
 
+def cut_sample(
+    src: Path, *, start: float, duration: float,
+    bitrate_kbps: int = 32, ffmpeg: str = "ffmpeg",
+) -> bytes:
+    """Extract ``[start, start+duration]`` of *src* as a small mono m4a, returned as
+    bytes. Used for speaker voice samples (rpi/specs/api.md)."""
+    with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as tf:
+        out = Path(tf.name)
+    cmd = [
+        ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+        "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(src),
+        "-c:a", "aac", "-b:a", f"{bitrate_kbps}k", "-ac", "1",
+        "-movflags", "+faststart", str(out),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise EncodeError(f"ffmpeg sample failed ({proc.returncode}): {proc.stderr.strip()}")
+        return out.read_bytes()
+    finally:
+        out.unlink(missing_ok=True)
+
+
 def probe_duration(path: Path, *, ffprobe: str = "ffprobe") -> float:
     """Return the media duration in seconds, derived from the file itself."""
     cmd = [

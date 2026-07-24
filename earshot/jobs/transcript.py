@@ -61,9 +61,15 @@ def render(
     session_dirname: str,
     duration: float,
     segments: list[Segment],
+    speaker_names: dict[str, str] | None = None,
     processed_at: datetime | None = None,
 ) -> str:
-    """Render ``transcript.md``. *header* is the session name, or its id when unnamed."""
+    """Render ``transcript.md``. *header* is the session name, or its id when unnamed.
+
+    *speaker_names* substitutes an assigned name for a ``Speaker N`` label; a label
+    with no name keeps the label (rpi/requirements/web-ui/name-speakers.md).
+    """
+    names = speaker_names or {}
     processed = (processed_at or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
     lines = [
         f"# {header}",
@@ -78,7 +84,8 @@ def render(
         text = seg.text.strip()
         prefix = f"[{format_offset(seg.start)}]"
         if seg.speaker:
-            lines.append(f"{prefix} {seg.speaker}: {text}")
+            who = names.get(seg.speaker, seg.speaker)
+            lines.append(f"{prefix} {who}: {text}")
         else:
             lines.append(f"{prefix} {text}")
     return "\n".join(lines) + "\n"

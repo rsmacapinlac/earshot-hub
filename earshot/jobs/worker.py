@@ -1,23 +1,22 @@
 """The single in-process job worker (rpi/adr/job-execution.md).
 
 One thread drains the ``jobs`` table oldest-first. For each job it decides the
-route **at dequeue** (local vs. service), then runs it. M6 implements the local
-route — a cancellable faster-whisper subprocess — with the service route deferred
-to M7; the routing decision and its seam are here now.
+route **at dequeue** (rpi/specs/processing.md#the-queue) and runs it:
 
-Coordination with the state machine (all device-state changes stay on the control
-loop thread):
+- **local** — a cancellable faster-whisper subprocess (rpi/specs/processing.md#fr-15).
+  The device enters ``processing`` (loop-serialised) so a local job never runs during
+  a recording; a recording preempts it via :meth:`preempt`, requeuing it with no
+  attempt bump.
+- **service** — submit ``session.m4a``, record the remote job id, poll, then fetch and
+  render the result (rpi/specs/processing.md#fr-15b). A service job runs on another
+  machine, so it does **not** change device state and is **not** preempted by recording;
+  it only populates ``status.processing``. An unreachable service is a connection
+  problem, not a failure — the job is requeued without a bump, and transcription falls
+  back to local next time.
 
-- Before running a **local** job the worker asks the controller to enter
-  ``processing`` (:meth:`Controller.begin_processing`). The request is granted only
-  when the device is idle, so a local job never starts during a recording.
-- A recording that starts *while* a local job runs preempts it: the control loop
-  calls :meth:`preempt`, which terminates the child; the job returns to ``queued``
-  and is re-run after the recording ends. Cancellation is a signal, so "without
-  delay" is a contract (rpi/specs/processing.md#preemption).
-
-Retry: on failure ``attempts`` is bumped and ``last_error`` recorded; the job is
-re-queued until ``processing.max_failures`` is reached (``0`` = forever).
+Crash resilience: a job left ``running`` is reset to ``queued`` on boot with its
+``remote_job_id`` preserved, so a service job **resumes by polling** rather than being
+resubmitted (rpi/specs/processing.md#crash-resilience).
 """
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ import threading
 from datetime import datetime
 from typing import Any, Callable, Protocol
 
+from earshot.jobs.service import ServiceJobFailed, ServiceJobGone, ServiceUnreachable
 from earshot.jobs.transcribe import Cancelled, LocalTranscriber, TranscribeError
 from earshot.jobs.transcript import Segment
 from earshot.storage.paths import render_session_id
@@ -39,11 +39,20 @@ class Transcriber(Protocol):
     def cancel(self) -> None: ...
 
 
-def decide_route(service: Any, kind: str) -> str:
-    """Route decided at job start (rpi/specs/processing.md). Diarize has no local
-    path; transcribe goes to a reachable service if configured, else local. An
-    unreachable service is not a failure — it just falls back to local."""
-    if kind == "diarize":
+class _Interrupted(RuntimeError):
+    """A service poll loop was interrupted (user cancel or shutdown)."""
+
+
+def decide_route(service: Any, job) -> str:
+    """Route decided at job start (rpi/specs/processing.md).
+
+    A job already submitted to the service (``remote_job_id`` set) resumes there,
+    never resubmitted elsewhere. Diarize has no local path. Transcribe goes to a
+    reachable service if configured, else local — an unreachable service just falls
+    back to local, never a failure."""
+    if job["remote_job_id"]:
+        return "service"
+    if job["kind"] == "diarize":
         return "service"
     if service is not None and service.reachable():
         return "service"
@@ -75,12 +84,13 @@ class JobWorker:
         self._stop = threading.Event()
         self._wake = threading.Event()
 
-        # Guards the currently running local job so preempt/cancel can reach it.
+        # Guards the currently running job so preempt/cancel can reach it.
         self._active_lock = threading.Lock()
-        self._active: Transcriber | None = None
+        self._active: Transcriber | None = None          # local child, if any
+        self._active_cancel: threading.Event | None = None  # service poll interrupt
         self._active_job_id: int | None = None
-        self._reason: str | None = None       # "preempt" | "cancel"
-        self._pending_cancel = False          # cancel arrived before the child started
+        self._reason: str | None = None                  # "preempt" | "cancel"
+        self._pending_cancel = False                     # arrived before the job started
 
     # -- lifecycle --------------------------------------------------------- #
 
@@ -90,20 +100,24 @@ class JobWorker:
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
-        # Terminate any running child so shutdown is prompt.
         with self._active_lock:
             if self._active is not None:
                 self._active.cancel()
+            if self._active_cancel is not None:
+                self._active_cancel.set()
         self._thread.join(timeout=5)
 
     def wake(self) -> None:
         """Nudge the worker after an enqueue so it doesn't wait out its poll."""
         self._wake.set()
 
-    # -- preemption / cancellation (called from the control loop / API) ---- #
+    # -- preemption / cancellation ----------------------------------------- #
 
     def preempt(self) -> None:
-        """Recording is starting: terminate the running local job (loop thread)."""
+        """Recording is starting: terminate the running local job (loop thread).
+
+        Only ever called while the device is ``processing``, which only a local job
+        causes — a service job leaves the device idle and is not preempted."""
         with self._active_lock:
             self._reason = "preempt"
             if self._active is not None:
@@ -112,15 +126,16 @@ class JobWorker:
                 self._pending_cancel = True
 
     def cancel_running(self, job_id: int) -> bool:
-        """Cancel a specific running local job (API DELETE). False if it isn't running."""
+        """Cancel a specific running job (API DELETE). False if it isn't running."""
         with self._active_lock:
             if self._active_job_id != job_id:
                 return False
             self._reason = "cancel"
             if self._active is not None:
                 self._active.cancel()
-            else:
-                self._pending_cancel = True
+            if self._active_cancel is not None:
+                self._active_cancel.set()
+            self._pending_cancel = True
             return True
 
     # -- the loop ---------------------------------------------------------- #
@@ -132,19 +147,39 @@ class JobWorker:
                 self._wake.wait(timeout=1.0)
                 self._wake.clear()
                 continue
-            route = decide_route(self._service, job["kind"])
-            if route == "local":
+            if decide_route(self._service, job) == "local":
                 self._process_local(job)
             else:
                 self._process_service(job)
 
-    def _process_service(self, job) -> None:  # pragma: no cover - M7
-        # No service client in M6; a diarize/service job cannot run yet.
-        self.db.mark_job_failed(
-            int(job["id"]), int(job["attempts"]) + 1,
-            "processing service route not available", _now(),
-        )
-        log.error("job %d needs a processing service (M7)", int(job["id"]))
+    def _claim(self, job_id: int, route: str, cancel: threading.Event | None,
+               transcriber: Transcriber | None) -> bool:
+        """Register the active job and claim it ``running``. False if it was
+        cancelled from the queue underneath us."""
+        with self._active_lock:
+            self._active_job_id = job_id
+            self._active = transcriber
+            self._active_cancel = cancel
+            self._reason = None
+            if self._pending_cancel:
+                self._pending_cancel = False
+                if transcriber is not None:
+                    transcriber.cancel()
+                if cancel is not None:
+                    cancel.set()
+        return self.db.mark_job_running(job_id, route, _now())
+
+    def _release(self) -> str | None:
+        with self._active_lock:
+            reason = self._reason
+            self._active = None
+            self._active_cancel = None
+            self._active_job_id = None
+            self._reason = None
+            self._pending_cancel = False
+        return reason
+
+    # -- local route ------------------------------------------------------- #
 
     def _process_local(self, job) -> None:
         job_id = int(job["id"])
@@ -153,70 +188,139 @@ class JobWorker:
             "session_id": render_session_id(session_id),
             "kind": job["kind"], "route": "local", "stage": "transcribing",
         }
-
         if not self._controller.begin_processing(snapshot):
-            # Device is busy (recording/finalizing): retry shortly.
-            self._stop.wait(0.1)
+            self._stop.wait(0.1)  # device busy (recording/finalizing): retry shortly
             return
-        if not self.db.mark_job_running(job_id, "local", _now()):
+        transcriber = self._new_transcriber()
+        if not self._claim(job_id, "local", None, transcriber):
+            self._release()
             self._controller.end_processing()  # cancelled from queued underneath us
             return
-
-        transcriber = self._new_transcriber()
-        with self._active_lock:
-            self._active_job_id = job_id
-            self._active = transcriber
-            if self._pending_cancel:
-                self._pending_cancel = False
-                transcriber.cancel()  # cancel/preempt arrived during setup
 
         segments: list[Segment] | None = None
         error: str | None = None
         try:
             segments = transcriber.run(self.store.m4a_path(session_id))
         except Cancelled:
-            reason = self._reason or "preempt"
+            segments = None
         except TranscribeError as exc:
             error = str(exc)
-            reason = None
-        else:
-            reason = None
-        finally:
-            with self._active_lock:
-                self._active = None
-                self._active_job_id = None
-                self._reason = None
-                self._pending_cancel = False
-
-        self._resolve(job, segments, error, reason)
-
-    def _resolve(self, job, segments, error, reason) -> None:
-        job_id = int(job["id"])
-        session_id = int(job["session_id"])
-        now = _now()
+        reason = self._release()
 
         if reason == "preempt":
-            # Not a failure: back to the queue, re-run after recording. The control
-            # loop is already moving to `recording`, so we do not touch device state.
-            self.db.requeue_job(job_id)
+            self.db.requeue_job(job_id)  # not a failure; loop already moving to recording
             log.info("job %d preempted by recording; requeued", job_id)
             return
         if reason == "cancel":
-            self.db.set_job_cancelled(job_id, now)
+            self.db.set_job_cancelled(job_id, _now())
             self._controller.end_processing()
             log.info("job %d cancelled", job_id)
             return
         if error is not None:
-            self._handle_failure(job, error, now)
+            self._handle_failure(job, error, _now())
             self._controller.end_processing()
             return
-
-        # Success.
         self.store.write_transcript_result(session_id, segments or [])
-        self.db.mark_job_done(job_id, now)
+        self.db.mark_job_done(job_id, _now())
         self._controller.end_processing()
         log.info("job %d done: %s (%d segments)",
                  job_id, render_session_id(session_id), len(segments or []))
+
+    # -- service route ----------------------------------------------------- #
+
+    def _process_service(self, job) -> None:
+        job_id = int(job["id"])
+        session_id = int(job["session_id"])
+        kind = job["kind"]
+        client = self._service.client() if self._service is not None else None
+        if client is None:
+            self.db.mark_job_failed(job_id, int(job["attempts"]) + 1,
+                                    "no processing service configured", _now())
+            log.error("job %d needs a processing service", job_id)
+            return
+
+        cancel = threading.Event()
+        snapshot = {"session_id": render_session_id(session_id), "kind": kind,
+                    "route": "service", "stage": "submitting"}
+        self._controller.set_processing(snapshot)
+        if not self._claim(job_id, "service", cancel, None):
+            self._release()
+            self._controller.set_processing(None)  # cancelled from queued underneath us
+            return
+
+        remote = job["remote_job_id"]
+        try:
+            if not remote:
+                remote = client.submit(self.store.m4a_path(session_id), kind)
+                self.db.update_job(job_id, remote_job_id=remote)
+            segments = self._poll_service(client, remote, job_id, snapshot, cancel)
+        except _Interrupted:
+            self._service_interrupted(job_id, client, remote)
+            return
+        except ServiceUnreachable as exc:
+            self.db.requeue_job(job_id, keep_remote=True)  # resume when it's back
+            log.warning("service unreachable for job %d; requeued, no attempt bump: %s", job_id, exc)
+            self._after_service()
+            self._stop.wait(self.config.processing.poll_interval_seconds)  # avoid a hot loop
+            return
+        except ServiceJobGone:
+            self.db.requeue_job(job_id)  # remote reaped/lost: resubmit next time
+            log.warning("remote job for %d is gone (404); will resubmit", job_id)
+            self._after_service()
+            return
+        except ServiceJobFailed as exc:
+            self._handle_failure(job, str(exc), _now())
+            self._after_service()
+            return
+
+        self.store.write_transcript_result(session_id, segments, diarized=(kind == "diarize"))
+        self.db.mark_job_done(job_id, _now())
+        self._after_service()
+        log.info("service job %d done: %s (%d segments)",
+                 job_id, render_session_id(session_id), len(segments))
+
+    def _poll_service(self, client, remote, job_id, snapshot, cancel) -> list[Segment]:
+        interval = self.config.processing.poll_interval_seconds
+        while True:
+            if cancel.is_set():
+                raise _Interrupted()
+            status = client.poll(remote)
+            stage, progress = status.get("stage"), status.get("progress")
+            self.db.update_job(job_id, stage=stage, progress=progress)
+            snap = dict(snapshot)
+            if stage:
+                snap["stage"] = stage
+            if progress is not None:
+                snap["progress"] = progress
+            self._controller.set_processing(snap)
+            state = status.get("status")
+            if state == "done":
+                return client.result(remote)
+            if state == "failed":
+                raise ServiceJobFailed((status.get("error") or {}).get("message", "service job failed"))
+            if state == "cancelled":
+                raise _Interrupted()
+            if cancel.wait(interval):  # interruptible poll interval
+                raise _Interrupted()
+
+    def _service_interrupted(self, job_id: int, client, remote) -> None:
+        reason = self._release()
+        if self._stop.is_set() and reason != "cancel":
+            # Shutdown: leave it resumable next boot (keep the remote id).
+            self.db.requeue_job(job_id, keep_remote=True)
+        else:
+            # User cancel: abandon the remote work (the service reaps its own).
+            if remote:
+                client.cancel(remote)
+            self.db.set_job_cancelled(job_id, _now())
+            log.info("service job %d cancelled", job_id)
+        self._controller.set_processing(None)
+
+    def _after_service(self) -> None:
+        self._release()
+        self._controller.set_processing(None)
+
+    # -- shared ------------------------------------------------------------ #
 
     def _handle_failure(self, job, error: str, now: str) -> None:
         job_id = int(job["id"])

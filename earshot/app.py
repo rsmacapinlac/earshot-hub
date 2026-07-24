@@ -17,6 +17,7 @@ from flask import Flask
 from earshot.api.server import create_app
 from earshot.config import Config
 from earshot.hal.bundle import Hal, build_hal
+from earshot.jobs.service import ServiceManager
 from earshot.jobs.worker import JobWorker
 from earshot.statemachine.machine import Controller
 from earshot.storage.db import Database
@@ -54,6 +55,7 @@ def build_application(
     shutdown_fn=None,
     reconcile_on_start: bool = True,
     transcriber_factory=None,
+    service_client_factory=None,
 ) -> Application:
     config = config or Config.load()
     hal = build_hal(config, override=hal_override, realtime=realtime)
@@ -69,10 +71,16 @@ def build_application(
     # starts (rpi/specs/processing.md#crash-resilience).
     db.reset_running_jobs()
 
+    if service_client_factory is not None:
+        service = ServiceManager(config, client_factory=service_client_factory)
+    else:
+        service = ServiceManager(config)
+
     controller = Controller(config, hal, store, shutdown_fn=shutdown_fn)
-    worker = JobWorker(config, store, controller, transcriber_factory=transcriber_factory)
+    worker = JobWorker(config, store, controller, service=service,
+                       transcriber_factory=transcriber_factory)
     controller.attach_worker(worker)
-    flask_app = create_app(controller, store, config, worker)
+    flask_app = create_app(controller, store, config, worker, service)
     return Application(
         config=config, hal=hal, db=db, store=store,
         controller=controller, worker=worker, flask_app=flask_app,
