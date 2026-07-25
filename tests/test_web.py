@@ -31,7 +31,7 @@ def test_index_and_app_js_served(client):
     idx = client.get("/")
     assert idx.status_code == 200
     body = idx.get_data(as_text=True)
-    assert "<title>earshot</title>" in body and "/app.js" in body
+    assert "<title>earshot hub</title>" in body and "/app.js" in body
     js = client.get("/app.js")
     assert js.status_code == 200 and "text/javascript" in js.headers["Content-Type"]
     assert "EventSource" in js.get_data(as_text=True)

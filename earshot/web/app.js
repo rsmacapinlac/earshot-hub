@@ -146,6 +146,7 @@ function renderHeader() {
   let label = dev.label;
   if (st && st.state === "recording" && st.recording) label = "Recording · " + fmtClock(st.recording.elapsed);
   document.getElementById("device-label").textContent = label;
+  document.title = "earshot hub — " + dev.label;
   document.getElementById("nav-sessions").classList.toggle("active", S.route.name !== "settings");
   document.getElementById("nav-settings").classList.toggle("active", S.route.name === "settings");
 }
