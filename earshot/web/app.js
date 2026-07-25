@@ -456,7 +456,6 @@ function diarizedBody(d) {
   const list = h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } });
   (S.speakers || []).forEach((sp, i) => {
     const color = colorOf[sp.label] || SPEAKER_PALETTE[i % SPEAKER_PALETTE.length];
-    const onName = debounce((v) => api.setSpeaker(d.id, sp.label, v.trim() || null).catch(fail), 500);
     list.appendChild(h("div", { style: { border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "14px" } },
       h("div", { style: { display: "flex", alignItems: "center", gap: "9px" } },
         h("span", { style: { width: "22px", height: "22px", borderRadius: "50%", background: color, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: "700", fontSize: "11px" } }, (sp.name || "").trim() ? sp.name.trim()[0].toUpperCase() : String(i + 1)),
@@ -464,7 +463,7 @@ function diarizedBody(d) {
       h("button", { class: "btn", style: { marginTop: "10px", padding: "6px 12px" }, "aria-label": `Play a sample of ${sp.label}`,
         onclick: () => playSample(d.id, sp.label) }, "▶ Voice sample"),
       h("input", { class: "spk-input", "data-focus": "spk-" + sp.label, value: sp.name || "", placeholder: "Assign a name…",
-        "aria-label": `Name for ${sp.label}`, oninput: (e) => onName(e.target.value) })));
+        "aria-label": `Name for ${sp.label}`, oninput: (e) => updateSpeakerNameLive(d.id, sp.label, e.target.value) })));
   });
   side.appendChild(list);
 
@@ -483,6 +482,31 @@ function diarizedBody(d) {
       h("div", { style: { fontSize: "16px", lineHeight: "1.7", paddingLeft: "16px" } }, seg.text)));
   }
   return h("div", { class: "diar-grid", style: { display: "grid", gridTemplateColumns: "320px 1fr", gap: "24px", alignItems: "start" } }, side, body);
+}
+
+const speakerSaveTimers = new Map();
+function updateSpeakerNameLive(id, label, value) {
+  const name = value.trim() || null;
+  const apply = (rows) => (rows || []).map((sp) => sp.label === label ? Object.assign({}, sp, { name }) : sp);
+  S.speakers = apply(S.speakers);
+  if (S.detail && S.detail.id === id) S.detail.speakers = apply(S.detail.speakers);
+  // Match the prototype: typed names immediately replace `Speaker N` throughout
+  // the visible transcript, while persistence is debounced to the device API.
+  renderView();
+
+  const key = id + "\0" + label;
+  clearTimeout(speakerSaveTimers.get(key));
+  speakerSaveTimers.set(key, setTimeout(() => {
+    api.setSpeaker(id, label, name)
+      .then((result) => {
+        if (result && result.speakers && S.detail && S.detail.id === id) {
+          S.speakers = result.speakers;
+          S.detail.speakers = result.speakers;
+        }
+      })
+      .catch(fail)
+      .finally(() => speakerSaveTimers.delete(key));
+  }, 500));
 }
 
 let sampleAudio = null;
