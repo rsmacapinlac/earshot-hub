@@ -46,7 +46,7 @@ def test_installer_config_toml_parses_to_defaults(tmp_path, monkeypatch):
         "encode_bitrate_kbps = 32\nshutdown_hold_seconds = 3\n\n"
         '[storage]\ndata_dir = "~/earshot-data"\ndisk_threshold_percent = 90\n\n'
         '[transcription]\nenabled = true\nmodel = "base.en"\nthreads = 2\n\n'
-        '[processing]\nservice_url = ""\npoll_interval_seconds = 5\nmax_failures = 3\n\n'
+        '[processing]\nservice_url = ""\nrequest_timeout_seconds = 0\nmax_failures = 3\n\n'
         '[web]\nenabled = true\nbind_address = "0.0.0.0"\nport = 8080\n',
         encoding="utf-8",
     )

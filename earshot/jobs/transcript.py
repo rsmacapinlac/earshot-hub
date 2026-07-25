@@ -39,6 +39,18 @@ def segments_from_raw(raw: list[dict]) -> list[Segment]:
     ]
 
 
+def normalize_speaker_labels(segments: list[Segment]) -> list[Segment]:
+    """Map raw service speaker labels to ``Speaker N`` by first appearance."""
+    mapping: dict[str, str] = {}
+    normalized: list[Segment] = []
+    for seg in segments:
+        speaker = seg.speaker
+        if speaker:
+            speaker = mapping.setdefault(speaker, f"Speaker {len(mapping) + 1}")
+        normalized.append(Segment(seg.start, seg.end, seg.text, speaker))
+    return normalized
+
+
 def format_offset(seconds: float) -> str:
     """``[MM:SS]`` under an hour, ``[HH:MM:SS]`` at or beyond one hour."""
     total = int(seconds)

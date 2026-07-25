@@ -15,7 +15,7 @@ BASE = {
                   "encode_bitrate_kbps": 32, "shutdown_hold_seconds": 3},
     "storage": {"data_dir": "~/earshot-data", "disk_threshold_percent": 90},
     "transcription": {"enabled": True, "model": "base.en", "threads": 2},
-    "processing": {"service_url": "", "poll_interval_seconds": 5, "max_failures": 3},
+    "processing": {"service_url": "", "request_timeout_seconds": 0, "max_failures": 3},
     "web": {"enabled": True, "bind_address": "0.0.0.0", "port": 8080},
 }
 
@@ -45,7 +45,7 @@ def test_base_is_valid():
     (_with("transcription", model=""), "transcription.model"),
     (_with("transcription", threads=0), "transcription.threads"),
     (_with("processing", service_url="ftp://x"), "processing.service_url"),
-    (_with("processing", poll_interval_seconds=0), "processing.poll_interval_seconds"),
+    (_with("processing", request_timeout_seconds=-1), "processing.request_timeout_seconds"),
     (_with("processing", max_failures=-1), "processing.max_failures"),
     (_with("web", bind_address=""), "web.bind_address"),
     (_with("web", port=0), "web.port"),

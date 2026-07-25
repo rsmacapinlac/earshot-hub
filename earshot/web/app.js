@@ -49,7 +49,7 @@ const api = {
   service: () => getJSON("/v1/service"),
   startRec: () => send("POST", "/v1/recording"),
   stopRec: () => send("DELETE", "/v1/recording"),
-  enqueue: (id, kind) => send("POST", "/v1/sessions/" + id + "/jobs", { kind }),
+  enqueue: (id, kind, opts) => send("POST", "/v1/sessions/" + id + "/jobs", Object.assign({ kind }, opts || {})),
   bulk: (kind) => send("POST", "/v1/jobs", { kind, target: "pending" }),
   rename: (id, name) => send("PATCH", "/v1/sessions/" + id, { name }),
   del: (id) => send("DELETE", "/v1/sessions/" + id),
@@ -62,6 +62,8 @@ const api = {
 const STATUS_META = {
   recording: { label: "Recording", color: "#ef4444" },
   pending: { label: "Audio only", color: "#c78a3d" },
+  transcribing: { label: "Transcribing", color: "#FFB300" },
+  diarizing: { label: "Diarizing", color: "#FFB300" },
   transcribed: { label: "Transcribed", color: "var(--color-primary)" },
   diarized: { label: "Transcribed with Speakers", color: "#9b59b6" },
   failed: { label: "Failed", color: "var(--color-error)" },
@@ -95,7 +97,7 @@ const S = {
 function structFingerprint(st) {
   if (!st) return "";
   const p = st.processing;
-  return st.state + "|" + (p ? p.session_id + ":" + p.kind + ":" + (p.progress == null ? "?" : "n") : "none") + "|" + (st.disk && st.disk.blocked);
+  return st.state + "|" + (p ? p.session_id + ":" + p.kind + ":" + p.route + ":" + (p.progress == null ? "?" : "n") : "none") + "|" + (st.disk && st.disk.blocked);
 }
 function updateLiveCounters() {
   const st = S.status; if (!st) return;
@@ -104,7 +106,7 @@ function updateLiveCounters() {
   if (st.recording) { set("live-clock", fmtClock(st.recording.elapsed)); set("live-row-dur", fmtClock(st.recording.elapsed)); }
   if (st.disk) { width("live-disk", st.disk.used_percent); set("live-disk-label", st.disk.used_percent + "% used"); }
   if (st.processing) {
-    set("live-progress-text", st.processing.progress != null ? Math.round(st.processing.progress * 100) + "%" : (st.processing.stage || "working…"));
+    set("live-progress-text", progressText(st.processing));
     if (st.processing.progress != null) width("live-progress", st.processing.progress * 100);
   }
 }
@@ -340,9 +342,15 @@ function failedBanner(d, job) {
     h("button", { class: "btn primary", style: { marginTop: "14px" }, onclick: () => api.enqueue(d.id, "transcribe").then(() => toast("Retrying transcription")).catch(fail) }, "↻ Retry transcription"));
 }
 
+function progressText(proc) {
+  if (proc.progress != null) return `${Math.round(proc.progress * 100)}%`;
+  if (proc.route === "service") return "Processing…";
+  return proc.stage || "Processing…";
+}
+
 function progressCard(proc) {
   const diar = proc.kind === "diarize";
-  const pctText = proc.progress != null ? `${Math.round(proc.progress * 100)}%` : (proc.stage || "working…");
+  const pctText = progressText(proc);
   const bar = proc.progress != null ? h("div", { style: { height: "8px", borderRadius: "99px", background: "var(--color-surface-hover)", overflow: "hidden", marginTop: "14px", border: "1px solid var(--color-border)" } },
     h("div", { id: "live-progress", style: { height: "100%", width: (proc.progress * 100) + "%", background: "#FFB300", transition: "width .3s" } })) : null;
   return h("div", { class: "card", style: { marginTop: "22px", padding: "22px 24px" } },
@@ -397,7 +405,7 @@ function diarizedBody(d) {
   const nameOf = {}; (S.speakers || []).forEach((s) => (nameOf[s.label] = s.name));
 
   // naming sidebar
-  const side = h("div", { class: "card", style: { padding: "22px", position: "sticky", top: "88px" } },
+  const side = h("div", { class: "card", style: { padding: "22px", position: "sticky", top: "88px", maxHeight: "calc(100vh - 104px)", overflowY: "auto" } },
     h("div", { class: "serif", style: { fontWeight: "700", fontSize: "18px" } }, "Name the speakers"),
     h("div", { class: "secondary", style: { fontSize: "13px", lineHeight: "1.55", margin: "6px 0 16px" } }, "Play each voice, then type who it is. Names replace the Speaker N labels throughout."));
   const list = h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } });
@@ -449,17 +457,17 @@ function viewSettings() {
     : (svc.configured ? "No response — transcription falls back to this device"
       : "Optional. Without one, transcription runs on the Pi and diarization is unavailable.");
 
-  const draft = h("input", { class: "field", "data-focus": "svc", value: svc.url || "", placeholder: "http://homelab.local:9000",
+  const draft = h("input", { class: "field", "data-focus": "svc", value: svc.url || "", placeholder: "http://homelab.local:9010",
     style: { flex: "1", minWidth: "260px" }, "aria-label": "Processing service URL" });
   const save = h("button", { class: "btn primary", onclick: () => { const u = draft.value.trim(); if (!u) return toast("Enter a service URL"); api.putService(u).then(async () => { S.service = await api.service(); toast("Service saved"); renderView(); }).catch(fail); } }, "Save");
-  const clear = svc.configured ? h("button", { class: "btn danger", onclick: () => api.clearService().then(async () => { S.service = await api.service(); toast("Service cleared · recording only"); renderView(); }).catch(fail) }, "Clear") : null;
+  const clear = svc.configured ? h("button", { class: "btn danger", onclick: () => api.clearService().then(async () => { S.service = await api.service(); toast("Service cleared · transcribing locally"); renderView(); }).catch(fail) }, "Clear") : null;
 
   const routeLabel = connected && svc.capabilities && svc.capabilities.transcribe ? "on the processing service" : "on this device";
 
   return h("div", { class: "view", style: { maxWidth: "720px" } },
     h("h1", { class: "title" }, "Settings"),
     h("p", { class: "secondary", style: { fontSize: "15px", lineHeight: "1.6", margin: "6px 0 28px" } },
-      "This device records and transcribes on its own. An optional earshot processing service on your network makes transcription faster and adds diarization."),
+      "This device records and transcribes on its own. An optional processing service on your network can speed transcription and adds diarization."),
     h("section", { class: "card", style: { padding: "26px 28px" } },
       h("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" } },
         h("h3", { class: "serif", style: { fontWeight: "700", fontSize: "20px", margin: "0" } }, "Processing service"),
@@ -502,8 +510,10 @@ function renderModal() {
         h("p", { class: "secondary", style: { fontSize: "14px", lineHeight: "1.6", margin: "0 0 20px" } }, "Diarization needs the processing service; plain transcription does not."),
         h("button", { class: "btn", style: { width: "100%", justifyContent: "flex-start", padding: "16px 18px", marginBottom: "12px" },
           onclick: () => { S.modal = null; renderModal(); api.enqueue(id, "transcribe").then(() => toast("Transcribing")).catch(fail); } }, "Transcribe — text with timestamps"),
+        h("label", { class: "mono muted", style: { display: "block", fontSize: "12px", margin: "0 0 8px" } }, "Speaker count hint (optional)"),
+        h("input", { id: "speaker-count-hint", class: "field", type: "number", min: "1", step: "1", placeholder: "infer automatically", style: { width: "100%", marginBottom: "12px" }, "aria-label": "Optional speaker count hint" }),
         h("button", { class: "btn", style: { width: "100%", justifyContent: "flex-start", padding: "16px 18px" },
-          onclick: () => { S.modal = null; renderModal(); api.enqueue(id, "diarize").then(() => toast("Diarizing on the service")).catch(fail); } }, "Diarize — label speakers"),
+          onclick: () => { const n = parseInt(document.getElementById("speaker-count-hint").value, 10); const opts = Number.isFinite(n) && n > 0 ? { num_speakers: n } : {}; S.modal = null; renderModal(); api.enqueue(id, "diarize", opts).then(() => toast("Diarizing on the service")).catch(fail); } }, "Diarize — label speakers"),
         h("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: "20px" } },
           h("button", { class: "btn", onclick: () => (S.modal = null, renderModal()) }, "Cancel")))));
   }

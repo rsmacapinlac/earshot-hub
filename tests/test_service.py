@@ -36,8 +36,8 @@ class FakeState:
         self.reachable = kw.get("reachable", True)
         self.caps = kw.get("caps", {"transcribe": True, "diarize": True})
         self.segments = kw.get("segments", [
-            Segment(0.0, 5.0, "morning all", "Speaker 1"),
-            Segment(5.0, 9.0, "analytics look fine", "Speaker 2"),
+            Segment(0.0, 5.0, "morning all", "SPEAKER_01"),
+            Segment(5.0, 9.0, "analytics look fine", "SPEAKER_00"),
         ])
         self.poll_gate: threading.Event | None = kw.get("poll_gate")
         self.fail = kw.get("fail", False)
@@ -50,10 +50,11 @@ class FakeServiceClient:
         self.url = url.rstrip("/")
         self.s = state
 
-    def health(self):
+    def openapi(self):
         if not self.s.reachable:
             raise ServiceUnreachable("down")
-        return {"status": "ok", "capabilities": self.s.caps}
+        params = [{"name": "diarize"}] if self.s.caps.get("diarize") else []
+        return {"paths": {"/asr": {"post": {"parameters": params}}}}
 
     def reachable(self):
         return self.s.reachable
@@ -61,25 +62,22 @@ class FakeServiceClient:
     def capabilities(self):
         return dict(self.s.caps) if self.s.reachable else None
 
-    def submit(self, m4a_path, kind):
+    def process(self, m4a_path, kind, *, num_speakers=None):
         if not self.s.reachable:
             raise ServiceUnreachable("down")
-        self.s.submitted.append((str(m4a_path), kind))
-        return "remote-1"
-
-    def poll(self, remote):
-        if not self.s.reachable:
-            raise ServiceUnreachable("down")
+        self.s.submitted.append((str(m4a_path), kind, num_speakers))
         if self.s.fail:
-            return {"status": "failed", "error": {"message": "svc boom"}}
-        if self.s.poll_gate is not None and not self.s.poll_gate.is_set():
-            return {"status": "running", "stage": "diarizing", "progress": 0.5}
-        return {"status": "done"}
-
-    def result(self, remote):
+            from earshot.jobs.service import ServiceJobFailed
+            raise ServiceJobFailed("svc boom")
+        if self.s.poll_gate is not None:
+            while not self.s.poll_gate.wait(0.02):
+                pass
+        if not self.s.reachable:
+            from earshot.jobs.service import ServiceJobFailed
+            raise ServiceJobFailed("down")
         return list(self.s.segments)
 
-    def cancel(self, remote):
+    def cancel(self, remote=None):
         self.s.cancelled.append(remote)
 
 
@@ -123,14 +121,14 @@ def make_app(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     apps = []
 
-    def _make(*, state=None, url="http://svc:9000", poll_interval=0.05,
+    def _make(*, state=None, url="http://svc:9000", request_timeout=0,
               transcriber_factory=None, max_failures=3):
         cfg = Config()
         cfg.storage.data_dir = str(tmp_path)
         cfg.processing.service_url = url
-        cfg.processing.poll_interval_seconds = poll_interval
+        cfg.processing.request_timeout_seconds = request_timeout
         cfg.processing.max_failures = max_failures
-        factory = (lambda u: FakeServiceClient(u, state)) if state is not None else None
+        factory = (lambda u, **_: FakeServiceClient(u, state)) if state is not None else None
         app = build_application(
             config=cfg, hal_override="stub", realtime=True,
             service_client_factory=factory, transcriber_factory=transcriber_factory,
@@ -187,11 +185,12 @@ def test_diarize_via_service_writes_speakers(make_app):
     client = app.flask_app.test_client()
     sid = _seed(app.store, name="Weekly sync")
 
-    job = client.post(f"/v1/sessions/{_sid(sid)}/jobs", json={"kind": "diarize"}).get_json()
+    job = client.post(f"/v1/sessions/{_sid(sid)}/jobs", json={"kind": "diarize", "num_speakers": 2}).get_json()
     assert _poll(lambda: client.get(f"/v1/jobs/{job['id']}").get_json()["state"] == "done"), \
         client.get(f"/v1/jobs/{job['id']}").get_json()
     assert client.get(f"/v1/jobs/{job['id']}").get_json()["route"] == "service"
     assert len(state.submitted) == 1  # submitted once, not resubmitted
+    assert state.submitted[0][2] == 2
 
     sess = client.get(f"/v1/sessions/{_sid(sid)}").get_json()
     assert sess["state"] == "diarized" and sess["diarized"] is True
@@ -232,15 +231,16 @@ def test_service_job_keeps_device_idle(make_app):
     status = client.get("/v1/status").get_json()
     assert status["state"] == "idle"
     assert status["led"]["rgb"] == [0, 255, 0]
-    assert status["processing"]["route"] == "service" and status["processing"]["stage"] == "diarizing"
+    assert status["processing"]["route"] == "service"
+    assert "stage" not in status["processing"] and "progress" not in status["processing"]
 
     gate.set()
     assert _poll(lambda: client.get("/v1/status").get_json()["processing"] is None)
 
 
-def test_unreachable_service_is_not_a_failure(make_app):
+def test_service_drop_during_request_is_a_failure(make_app):
     # Enqueue while reachable (diarize needs the capability), then drop the service
-    # mid-flight: the job must wait — requeued without ever burning its retry budget.
+    # mid-request: the synchronous attempt fails, while audio remains on device.
     gate = threading.Event()
     state = FakeState(poll_gate=gate)
     app = make_app(state=state, max_failures=1)
@@ -249,16 +249,12 @@ def test_unreachable_service_is_not_a_failure(make_app):
     job = client.post(f"/v1/sessions/{_sid(sid)}/jobs", json={"kind": "diarize"}).get_json()
     assert _poll(lambda: client.get("/v1/status").get_json()["processing"] is not None)
 
-    state.reachable = False  # LAN outage while polling
-    time.sleep(0.3)
-    row = client.get(f"/v1/jobs/{job['id']}").get_json()
-    assert row["state"] in ("queued", "running") and row["attempts"] == 0
-
-    state.reachable = True  # comes back
+    state.reachable = False  # LAN outage while the synchronous request is in flight
     gate.set()
-    app.worker.wake()
-    assert _poll(lambda: client.get(f"/v1/jobs/{job['id']}").get_json()["state"] == "done")
-    assert len(state.submitted) == 1  # resumed, not resubmitted
+    assert _poll(lambda: client.get(f"/v1/jobs/{job['id']}").get_json()["state"] == "failed")
+    row = client.get(f"/v1/jobs/{job['id']}").get_json()
+    assert row["attempts"] == 1 and "down" in row["last_error"]
+    assert app.store.m4a_path(sid).exists()
 
 
 def test_service_job_failure_is_terminal(make_app):
@@ -346,13 +342,13 @@ def test_local_retranscribe_reverts_diarization(make_app):
 # -- crash resume ----------------------------------------------------------- #
 
 
-def test_running_service_job_resumes_by_polling(tmp_path, monkeypatch):
+def test_running_service_job_reruns_after_crash(tmp_path, monkeypatch):
     for var in ("EARSHOT_HAL", "EARSHOT_CONFIG", "EARSHOT_DATA_DIR"):
         monkeypatch.delenv(var, raising=False)
     cfg = Config()
     cfg.storage.data_dir = str(tmp_path)
     cfg.processing.service_url = "http://svc:9000"
-    cfg.processing.poll_interval_seconds = 0.05
+    cfg.processing.request_timeout_seconds = 0
 
     from earshot.storage.db import Database
     from earshot.storage.store import Store
@@ -362,19 +358,18 @@ def test_running_service_job_resumes_by_polling(tmp_path, monkeypatch):
     sid = _seed(seed)
     job_id = db.insert_job(sid, "diarize", datetime.now().isoformat())
     db.mark_job_running(job_id, "service", datetime.now().isoformat())
-    db.update_job(job_id, remote_job_id="remote-1")  # already submitted before the crash
     db.close()
 
     state = FakeState()
     app = build_application(
         config=cfg, hal_override="stub", realtime=True,
-        service_client_factory=lambda u: FakeServiceClient(u, state),
+        service_client_factory=lambda u, **_: FakeServiceClient(u, state),
     )
     app.start()
     try:
         client = app.flask_app.test_client()
         assert _poll(lambda: client.get(f"/v1/jobs/{job_id}").get_json()["state"] == "done")
-        assert state.submitted == []  # resumed by polling, never resubmitted
+        assert len(state.submitted) == 1  # re-run against stateless synchronous service
         assert app.store.is_diarized(sid)
     finally:
         app.stop()
@@ -396,20 +391,20 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/v1/health":
-            self._send(200, {"status": "ok", "capabilities": {"transcribe": True, "diarize": True}})
-        elif self.path.endswith("/result"):
-            self._send(200, {"segments": [{"start": 0.0, "end": 1.0, "text": "hi", "speaker": "Speaker 1"}]})
-        else:  # poll
-            self._send(200, {"status": "done", "stage": "done"})
+        if self.path == "/openapi.json":
+            self._send(200, {"paths": {"/asr": {"post": {"parameters": [{"name": "diarize"}]}}}})
+        else:
+            self._send(404, {"error": "not found"})
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
         ctype = self.headers.get("Content-Type", "")
+        assert self.path.startswith("/asr?") and "diarize=true" in self.path
+        assert "min_speakers=2" in self.path and "max_speakers=2" in self.path
         assert ctype.startswith("multipart/form-data"), ctype
-        assert b'name="kind"' in body and b'name="audio"' in body
-        self._send(202, {"job_id": "remote-xyz", "status": "queued"})
+        assert b'name="audio_file"' in body
+        self._send(200, {"segments": [{"start": 0.0, "end": 1.0, "text": "hi", "speaker": "SPEAKER_01"}]})
 
 
 def test_real_service_client_over_http(tmp_path):
@@ -423,10 +418,7 @@ def test_real_service_client_over_http(tmp_path):
 
         m4a = tmp_path / "x.m4a"
         m4a.write_bytes(b"\x00\x01\x02\x03")
-        remote = client.submit(m4a, "diarize")
-        assert remote == "remote-xyz"
-        assert client.poll(remote)["status"] == "done"
-        segs = client.result(remote)
+        segs = client.process(m4a, "diarize", num_speakers=2)
         assert segs[0].speaker == "Speaker 1" and segs[0].text == "hi"
     finally:
         server.shutdown()

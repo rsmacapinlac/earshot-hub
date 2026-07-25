@@ -18,7 +18,7 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -42,11 +42,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id     INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     kind           TEXT NOT NULL,
+    num_speakers   INTEGER,
     route          TEXT,
     state          TEXT NOT NULL,
     stage          TEXT,
     progress       REAL,
-    remote_job_id  TEXT,
     attempts       INTEGER NOT NULL DEFAULT 0,
     last_error     TEXT,
     enqueued_at    TEXT NOT NULL,
@@ -71,8 +71,15 @@ class Database:
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_SCHEMA)
+            self._ensure_columns()
             self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             self._conn.commit()
+
+    def _ensure_columns(self) -> None:
+        """Add columns introduced after v1 without rebuilding operator data."""
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(jobs)")}
+        if "num_speakers" not in cols:
+            self._conn.execute("ALTER TABLE jobs ADD COLUMN num_speakers INTEGER")
 
     def close(self) -> None:
         with self._lock:
@@ -196,11 +203,12 @@ class Database:
 
     # -- jobs -------------------------------------------------------------- #
 
-    def insert_job(self, session_id: int, kind: str, enqueued_at: str) -> int:
+    def insert_job(self, session_id: int, kind: str, enqueued_at: str,
+                   num_speakers: int | None = None) -> int:
         cur = self._execute(
-            "INSERT INTO jobs (session_id, kind, state, enqueued_at) "
-            "VALUES (?, ?, 'queued', ?)",
-            (session_id, kind, enqueued_at),
+            "INSERT INTO jobs (session_id, kind, num_speakers, state, enqueued_at) "
+            "VALUES (?, ?, ?, 'queued', ?)",
+            (session_id, kind, num_speakers, enqueued_at),
         )
         return int(cur.lastrowid)
 
@@ -274,15 +282,13 @@ class Database:
         """Return a job to the queue, keeping its id (so it stays in order/front).
 
         Used for a retry (pass the bumped *attempts*/*last_error*) and for
-        preemption/crash recovery (pass neither — not a failure). *keep_remote*
-        preserves ``remote_job_id`` so an unreachable service job resumes by polling
-        rather than resubmitting (rpi/specs/processing.md#crash-resilience)."""
+        preemption/crash recovery (pass neither — not a failure). ``keep_remote`` is
+        accepted only for compatibility with older callers; synchronous service jobs
+        have no remote state to preserve (rpi/specs/processing.md#crash-resilience)."""
         fields: dict[str, Any] = {
             "state": "queued", "route": None, "started_at": None,
             "finished_at": None, "stage": None, "progress": None,
         }
-        if not keep_remote:
-            fields["remote_job_id"] = None
         if attempts is not None:
             fields["attempts"] = attempts
         if last_error is not None:
@@ -292,9 +298,8 @@ class Database:
     def reset_running_jobs(self) -> int:
         """Return every ``running`` job to ``queued`` on startup (crash resilience).
 
-        ``remote_job_id`` is **preserved**: a service job that was in flight resumes
-        by polling that id rather than being resubmitted, while a local job (which has
-        none) simply re-runs (rpi/specs/processing.md#crash-resilience)."""
+        Service and local jobs both simply re-run; the synchronous service has no
+        remote state to resume (rpi/specs/processing.md#crash-resilience)."""
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE jobs SET state='queued', route=NULL, started_at=NULL, "

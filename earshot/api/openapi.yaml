@@ -405,17 +405,19 @@ components:
     ProcessingStatus:
       type: [object, "null"]
       additionalProperties: false
-      required: [session_id, kind, route, stage]
+      required: [session_id, kind, route]
       properties:
         session_id: { $ref: "#/components/schemas/SessionIdString" }
         kind: { $ref: "#/components/schemas/JobKind" }
         route: { $ref: "#/components/schemas/JobRoute" }
-        stage: { type: string }
+        stage:
+          type: string
+          description: Present only for local transcription stages the device can observe.
         progress:
           type: number
           minimum: 0
           maximum: 1
-          description: Omitted for stages that cannot be honestly measured.
+          description: Present only for local progress that can be honestly measured.
 
     Disk:
       type: object
@@ -440,7 +442,7 @@ components:
 
     SessionState:
       type: string
-      enum: [recording, pending, transcribed, diarized, failed]
+      enum: [recording, pending, transcribing, diarizing, transcribed, diarized, failed]
 
     Session:
       type: object
@@ -598,6 +600,10 @@ components:
       required: [kind]
       properties:
         kind: { $ref: "#/components/schemas/JobKind" }
+        num_speakers:
+          type: integer
+          minimum: 1
+          description: Optional diarization hint; sent as min_speakers=max_speakers.
 
     BulkJobCreate:
       type: object
@@ -632,7 +638,7 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/ServiceCapabilities" }
             - { type: "null" }
-          description: From the service's health endpoint; null when unreachable/unset.
+          description: Synthesized from service reachability and /openapi.json probing; null when unreachable/unset.
 
     ServiceUpdate:
       type: object

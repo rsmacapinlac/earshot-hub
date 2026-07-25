@@ -24,7 +24,7 @@ def test_defaults_match_spec():
     assert cfg.transcription.model == "base.en"
     assert cfg.transcription.threads == 2
     assert cfg.processing.service_url == ""
-    assert cfg.processing.poll_interval_seconds == 5
+    assert cfg.processing.request_timeout_seconds == 0
     assert cfg.processing.max_failures == 3
     assert cfg.web.bind_address == "0.0.0.0"
     assert cfg.web.port == 8080

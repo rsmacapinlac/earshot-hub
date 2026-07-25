@@ -97,7 +97,7 @@ threads = 2
 
 [processing]
 service_url = "$SERVICE_URL"
-poll_interval_seconds = 5
+request_timeout_seconds = 0
 max_failures = 3
 
 [web]

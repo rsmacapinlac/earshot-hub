@@ -71,11 +71,11 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
         # Diarization needs a processing service that reports the capability.
         return service is not None and service.diarize_available()
 
-    def enqueue(session_id: int, kind: str) -> dict:
+    def enqueue(session_id: int, kind: str, num_speakers: int | None = None) -> dict:
         if kind == "diarize" and not diarize_available():
             raise ApiError(409, "diarize_unavailable",
                            "no processing service provides diarization")
-        job_id = store.db.insert_job(session_id, kind, datetime.now().isoformat())
+        job_id = store.db.insert_job(session_id, kind, datetime.now().isoformat(), num_speakers)
         if worker is not None:
             worker.wake()
         return job_api(store.db.get_job(job_id))
@@ -245,11 +245,13 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
     def enqueue_job(id_str: str):
         session_id, _ = session_row_or_404(id_str)
         body = request_json("JobCreate")
+        if body.get("num_speakers") is not None and body["kind"] != "diarize":
+            raise ApiError(400, "invalid_body", "num_speakers is only valid for diarize jobs")
         if not store.m4a_path(session_id).exists():
             raise ApiError(409, "not_finalized", "session has no audio to process")
         if store.db.active_job_for_session(session_id) is not None:
             raise ApiError(409, "job_exists", "a job is already queued or running for this session")
-        return respond(enqueue(session_id, body["kind"]), "Job", status=202)
+        return respond(enqueue(session_id, body["kind"], body.get("num_speakers")), "Job", status=202)
 
     @app.post("/v1/jobs")
     def bulk_enqueue():

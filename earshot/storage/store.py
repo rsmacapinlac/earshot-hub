@@ -225,6 +225,9 @@ class Store:
         if active_id is not None and row["id"] == active_id:
             return "recording"
         session_id = int(row["id"])
+        active = self.db.active_job_for_session(session_id)
+        if active is not None:
+            return "diarizing" if active["kind"] == "diarize" else "transcribing"
         if self.has_transcript(session_id):
             return "diarized" if self.is_diarized(session_id) else "transcribed"
         latest = self.db.latest_job_for_session(session_id)

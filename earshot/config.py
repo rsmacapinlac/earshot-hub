@@ -66,7 +66,7 @@ class TranscriptionConfig:
 @dataclass
 class ProcessingConfig:
     service_url: str = ""
-    poll_interval_seconds: int = 5
+    request_timeout_seconds: int = 0
     max_failures: int = 3
 
 
@@ -230,8 +230,8 @@ class Config:
         url = p.service_url.strip()
         if url and not (url.startswith("http://") or url.startswith("https://")):
             raise ConfigError("processing.service_url must start with http:// or https:// (or be empty)")
-        if p.poll_interval_seconds <= 0:
-            raise ConfigError("processing.poll_interval_seconds must be > 0")
+        if p.request_timeout_seconds < 0:
+            raise ConfigError("processing.request_timeout_seconds must be >= 0 (0 = no timeout)")
         if p.max_failures < 0:
             raise ConfigError("processing.max_failures must be >= 0 (0 = retry forever)")
         # [web]

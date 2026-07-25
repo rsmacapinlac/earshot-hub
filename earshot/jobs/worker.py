@@ -7,16 +7,15 @@ route **at dequeue** (rpi/specs/processing.md#the-queue) and runs it:
   The device enters ``processing`` (loop-serialised) so a local job never runs during
   a recording; a recording preempts it via :meth:`preempt`, requeuing it with no
   attempt bump.
-- **service** — submit ``session.m4a``, record the remote job id, poll, then fetch and
-  render the result (rpi/specs/processing.md#fr-15b). A service job runs on another
-  machine, so it does **not** change device state and is **not** preempted by recording;
-  it only populates ``status.processing``. An unreachable service is a connection
-  problem, not a failure — the job is requeued without a bump, and transcription falls
-  back to local next time.
+- **service** — submit ``session.m4a`` to the synchronous off-the-shelf service and
+  render the returned segments (rpi/specs/processing.md#fr-15b). A service job runs on
+  another machine, so it does **not** change device state and is **not** preempted by
+  recording; it only populates ``status.processing``. An unreachable service is a
+  connection problem, not a failure — the job is requeued without a bump, and
+  transcription falls back to local next time.
 
-Crash resilience: a job left ``running`` is reset to ``queued`` on boot with its
-``remote_job_id`` preserved, so a service job **resumes by polling** rather than being
-resubmitted (rpi/specs/processing.md#crash-resilience).
+Crash resilience: a job left ``running`` is reset to ``queued`` on boot and re-run;
+there is no remote job state to resume (rpi/specs/processing.md#crash-resilience).
 """
 
 from __future__ import annotations
@@ -26,9 +25,9 @@ import threading
 from datetime import datetime
 from typing import Any, Callable, Protocol
 
-from earshot.jobs.service import ServiceJobFailed, ServiceJobGone, ServiceUnreachable
+from earshot.jobs.service import ServiceJobFailed, ServiceUnreachable
 from earshot.jobs.transcribe import Cancelled, LocalTranscriber, TranscribeError
-from earshot.jobs.transcript import Segment
+from earshot.jobs.transcript import Segment, normalize_speaker_labels
 from earshot.storage.paths import render_session_id
 
 log = logging.getLogger("earshot.jobs")
@@ -46,12 +45,8 @@ class _Interrupted(RuntimeError):
 def decide_route(service: Any, job) -> str:
     """Route decided at job start (rpi/specs/processing.md).
 
-    A job already submitted to the service (``remote_job_id`` set) resumes there,
-    never resubmitted elsewhere. Diarize has no local path. Transcribe goes to a
-    reachable service if configured, else local — an unreachable service just falls
-    back to local, never a failure."""
-    if job["remote_job_id"]:
-        return "service"
+    Diarize has no local path. Transcribe goes to a reachable service if configured,
+    else local — an unreachable service just falls back to local, never a failure."""
     if job["kind"] == "diarize":
         return "service"
     if service is not None and service.reachable():
@@ -238,80 +233,68 @@ class JobWorker:
                                     "no processing service configured", _now())
             log.error("job %d needs a processing service", job_id)
             return
+        if not client.reachable():
+            self.db.requeue_job(job_id)
+            log.warning("processing service unreachable for job %d; requeued, no attempt bump", job_id)
+            self._stop.wait(1.0)
+            return
 
         cancel = threading.Event()
         snapshot = {"session_id": render_session_id(session_id), "kind": kind,
-                    "route": "service", "stage": "submitting"}
+                    "route": "service"}
         self._controller.set_processing(snapshot)
         if not self._claim(job_id, "service", cancel, None):
             self._release()
             self._controller.set_processing(None)  # cancelled from queued underneath us
             return
 
-        remote = job["remote_job_id"]
         try:
-            if not remote:
-                remote = client.submit(self.store.m4a_path(session_id), kind)
-                self.db.update_job(job_id, remote_job_id=remote)
-            segments = self._poll_service(client, remote, job_id, snapshot, cancel)
+            segments = self._call_service(client, job, cancel)
         except _Interrupted:
-            self._service_interrupted(job_id, client, remote)
+            self._service_interrupted(job_id)
             return
-        except ServiceUnreachable as exc:
-            self.db.requeue_job(job_id, keep_remote=True)  # resume when it's back
-            log.warning("service unreachable for job %d; requeued, no attempt bump: %s", job_id, exc)
-            self._after_service()
-            self._stop.wait(self.config.processing.poll_interval_seconds)  # avoid a hot loop
-            return
-        except ServiceJobGone:
-            self.db.requeue_job(job_id)  # remote reaped/lost: resubmit next time
-            log.warning("remote job for %d is gone (404); will resubmit", job_id)
-            self._after_service()
-            return
-        except ServiceJobFailed as exc:
+        except (ServiceJobFailed, ServiceUnreachable) as exc:
             self._handle_failure(job, str(exc), _now())
             self._after_service()
             return
 
+        if kind == "diarize":
+            segments = normalize_speaker_labels(segments)
         self.store.write_transcript_result(session_id, segments, diarized=(kind == "diarize"))
         self.db.mark_job_done(job_id, _now())
         self._after_service()
         log.info("service job %d done: %s (%d segments)",
                  job_id, render_session_id(session_id), len(segments))
 
-    def _poll_service(self, client, remote, job_id, snapshot, cancel) -> list[Segment]:
-        interval = self.config.processing.poll_interval_seconds
-        while True:
-            if cancel.is_set():
-                raise _Interrupted()
-            status = client.poll(remote)
-            stage, progress = status.get("stage"), status.get("progress")
-            self.db.update_job(job_id, stage=stage, progress=progress)
-            snap = dict(snapshot)
-            if stage:
-                snap["stage"] = stage
-            if progress is not None:
-                snap["progress"] = progress
-            self._controller.set_processing(snap)
-            state = status.get("status")
-            if state == "done":
-                return client.result(remote)
-            if state == "failed":
-                raise ServiceJobFailed((status.get("error") or {}).get("message", "service job failed"))
-            if state == "cancelled":
-                raise _Interrupted()
-            if cancel.wait(interval):  # interruptible poll interval
-                raise _Interrupted()
+    def _call_service(self, client, job, cancel) -> list[Segment]:
+        result: dict[str, Any] = {}
 
-    def _service_interrupted(self, job_id: int, client, remote) -> None:
+        def target() -> None:
+            try:
+                result["segments"] = client.process(
+                    self.store.m4a_path(int(job["session_id"])),
+                    job["kind"],
+                    num_speakers=job["num_speakers"],
+                )
+            except BaseException as exc:  # passed back to the worker thread
+                result["error"] = exc
+
+        thread = threading.Thread(target=target, name="earshot-service-request", daemon=True)
+        thread.start()
+        while thread.is_alive():
+            if cancel.wait(0.1):
+                raise _Interrupted()
+        if "error" in result:
+            raise result["error"]
+        return result["segments"]
+
+    def _service_interrupted(self, job_id: int) -> None:
         reason = self._release()
         if self._stop.is_set() and reason != "cancel":
-            # Shutdown: leave it resumable next boot (keep the remote id).
-            self.db.requeue_job(job_id, keep_remote=True)
+            self.db.requeue_job(job_id)
         else:
-            # User cancel: abandon the remote work (the service reaps its own).
-            if remote:
-                client.cancel(remote)
+            # The stateless synchronous service cannot be cancelled; the request thread
+            # may finish later and its result is discarded.
             self.db.set_job_cancelled(job_id, _now())
             log.info("service job %d cancelled", job_id)
         self._controller.set_processing(None)
