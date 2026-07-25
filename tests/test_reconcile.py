@@ -159,7 +159,7 @@ def test_adopt_orphan_directory(store):
     d = _make_dir(store, sid)
     _encode_m4a(d, 1.0)
     _write_status(
-        d, status="diarized", name="Weekly sync",
+        d, status="diarized", name="Weekly sync", occurred_at="2026-07-20T14:00",
         speakers={"Speaker 1": "Ritchie", "Speaker 2": "Sarah"},
     )
 
@@ -169,6 +169,7 @@ def test_adopt_orphan_directory(store):
     row = store.db.get_session(sid)
     assert row is not None
     assert row["name"] == "Weekly sync"
+    assert row["occurred_at"] == "2026-07-20T14:00"
     assert row["duration"] and row["duration"] > 0
     assert row["size"] and row["size"] > 0
     assert row["diarized"] == 1

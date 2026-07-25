@@ -144,10 +144,18 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
         )
 
     @app.patch("/v1/sessions/<id_str>")
-    def rename_session(id_str: str):
+    def patch_session(id_str: str):
         session_id, _ = session_row_or_404(id_str)
-        body = request_json("NameUpdate")
-        store.set_name(session_id, body["name"])  # rewrites transcript.md header if present
+        body = request_json("SessionPatch")
+        fields: dict[str, Any] = {}
+        if "name" in body:
+            fields["name"] = body["name"]
+        if "occurred_at" in body:
+            try:
+                fields["occurred_at"] = store.normalize_occurred_at(body["occurred_at"])
+            except ValueError as exc:
+                raise ApiError(400, "invalid_body", str(exc))
+        store.set_session_fields(session_id, **fields)  # rewrites transcript.md header if present
         updated = store.db.get_session(session_id)
         return respond(store.session_detail_api(updated, controller.active_session_id), "SessionDetail")
 

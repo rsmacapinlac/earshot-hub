@@ -67,12 +67,22 @@ def format_duration(seconds: float) -> str:
     return f"{h}h {m}m {s}s"
 
 
+def _format_occurred_at(value: str | None) -> str | None:
+    """Transcript header form for the user-asserted session date/time."""
+    if not value:
+        return None
+    # API/storage use ISO (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`); the markdown
+    # header uses a space separator, matching the user-facing spec examples.
+    return value.replace("T", " ", 1)
+
+
 def render(
     *,
     header: str,
     session_dirname: str,
     duration: float,
     segments: list[Segment],
+    occurred_at: str | None = None,
     speaker_names: dict[str, str] | None = None,
     processed_at: datetime | None = None,
 ) -> str:
@@ -86,6 +96,11 @@ def render(
     lines = [
         f"# {header}",
         f"**Session:** {session_dirname}",
+    ]
+    occurred = _format_occurred_at(occurred_at)
+    if occurred:
+        lines.append(f"**Date:** {occurred}")
+    lines += [
         f"**Duration:** {format_duration(duration)}",
         f"**Processed:** {processed}",
         "",

@@ -18,12 +18,13 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT,
+    occurred_at TEXT,
     created_at  TEXT NOT NULL,
     duration    REAL,
     size        INTEGER,
@@ -77,8 +78,12 @@ class Database:
 
     def _ensure_columns(self) -> None:
         """Add columns introduced after v1 without rebuilding operator data."""
-        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(jobs)")}
-        if "num_speakers" not in cols:
+        session_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
+        if "occurred_at" not in session_cols:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN occurred_at TEXT")
+
+        job_cols = {row[1] for row in self._conn.execute("PRAGMA table_info(jobs)")}
+        if "num_speakers" not in job_cols:
             self._conn.execute("ALTER TABLE jobs ADD COLUMN num_speakers INTEGER")
 
     def close(self) -> None:

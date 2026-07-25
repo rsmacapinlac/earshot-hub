@@ -40,6 +40,7 @@
   @keyframes ledpulse { 0%,100%{opacity:1} 50%{opacity:.28} }
   @keyframes recring { 0%{transform:scale(1);opacity:.5} 100%{transform:scale(1.9);opacity:0} }
   @keyframes fadeup { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+  @keyframes indet { 0%{background-position:-40% 0} 100%{background-position:140% 0} }
   input:focus, button:focus-visible { outline:none; box-shadow:var(--shadow-focus); }
 </style>
 </helmet>
@@ -157,12 +158,29 @@
             <span style="{{ sel.badgeStyle }}">{{ sel.statusLabel }}</span>
           </div>
           <div style="font-family:var(--font-mono);font-size:13px;color:var(--color-muted);margin-top:8px;">{{ sel.metaLine }}</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--color-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M16 2v4M8 2v4M3 10h18"></path></svg>
+            <input type="date" value="{{ sel.occurredDate }}" onInput="{{ setOccurredDate }}" title="When this conversation actually happened — optional" style="font-family:var(--font-mono);font-size:13px;padding:6px 9px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);" />
+            <input type="time" value="{{ sel.occurredTime }}" onInput="{{ setOccurredTime }}" title="Optional time" style="font-family:var(--font-mono);font-size:13px;padding:6px 9px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);" />
+            <sc-if value="{{ sel.occurredSet }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ clearOccurred }}" title="Clear the date" style="font-family:var(--font-sans);font-size:13px;font-weight:600;padding:6px 12px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text-secondary);cursor:pointer;">Clear</button>
+            </sc-if>
+            <sc-if value="{{ sel.occurredUnset }}" hint-placeholder-val="{{ true }}">
+              <span style="font-size:12px;color:var(--color-muted);">Optional</span>
+            </sc-if>
+          </div>
         </div>
         <div style="display:flex;gap:9px;flex-wrap:wrap;">
           <button onClick="{{ download }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 15px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;display:inline-flex;align-items:center;gap:7px;">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M7 10l5 5 5-5"></path><path d="M12 15V3"></path></svg>
             Download Audio
           </button>
+          <sc-if value="{{ sel.showTranscript }}" hint-placeholder-val="{{ false }}">
+            <button onClick="{{ downloadTranscript }}" title="Export transcript.md" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 15px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;display:inline-flex;align-items:center;gap:7px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
+              Transcript
+            </button>
+          </sc-if>
           <button onClick="{{ askDelete }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 15px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-error);cursor:pointer;display:inline-flex;align-items:center;gap:7px;">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path></svg>
             Delete
@@ -263,7 +281,7 @@
         <!-- PLAIN transcript -->
         <sc-if value="{{ sel.isPlain }}" hint-placeholder-val="{{ true }}">
           <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:28px 32px;max-width:800px;">
-            <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);border-bottom:1px solid var(--color-border);padding-bottom:14px;margin-bottom:18px;">transcript.md · text only, no speaker labels</div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);border-bottom:1px solid var(--color-border);padding-bottom:14px;margin-bottom:18px;">{{ sel.plainCaption }}</div>
             <sc-for list="{{ sel.transcript }}" as="line" hint-placeholder-count="6">
               <div style="display:flex;gap:16px;margin-bottom:14px;line-height:1.7;">
                 <span style="font-family:var(--font-mono);font-size:13px;color:var(--color-primary);flex-shrink:0;padding-top:1px;">{{ line.t }}</span>
@@ -302,7 +320,7 @@
             </div>
 
             <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:28px 32px;">
-              <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);border-bottom:1px solid var(--color-border);padding-bottom:14px;margin-bottom:18px;">transcript.md · diarized on the processing service</div>
+              <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);border-bottom:1px solid var(--color-border);padding-bottom:14px;margin-bottom:18px;">{{ sel.diarizedCaption }}</div>
               <sc-for list="{{ sel.diarized }}" as="d" hint-placeholder-count="6">
                 <div style="margin-bottom:20px;">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
@@ -366,7 +384,7 @@
   <footer style="border-top:1px solid var(--color-border);padding:22px 24px;">
     <div style="max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--color-text-secondary);font-family:var(--font-mono);">
       <span>earshot · Raspberry Pi 4B + ReSpeaker 2-Mic HAT</span>
-      <span>Local-first capture · v1.0</span>
+      <span>Local-first capture · v1.1</span>
     </div>
   </footer>
 
@@ -410,6 +428,12 @@
           </span>
         </button>
 
+        <div style="display:flex;align-items:center;gap:10px;margin-top:16px;padding-top:16px;border-top:1px solid var(--color-border);">
+          <label style="font-size:13px;font-weight:600;color:var(--color-text-secondary);">Speakers <span style="font-weight:400;color:var(--color-muted);">(optional)</span></label>
+          <input value="{{ numSpeakers }}" onInput="{{ onNumSpeakers }}" inputMode="numeric" placeholder="auto" style="width:76px;font-family:var(--font-mono);font-size:14px;padding:8px 11px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
+          <span style="font-size:12px;color:var(--color-muted);line-height:1.4;flex:1;">Diarization hint passed to the service. Leave blank to let it detect the count.</span>
+        </div>
+
         <div style="display:flex;justify-content:flex-end;margin-top:20px;">
           <button onClick="{{ closeTranscribeModal }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:10px 18px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;">Cancel</button>
         </div>
@@ -438,6 +462,7 @@ class Component extends DCLogic {
     transcribeProgress: 0,
     diarizingId: null,
     diarizeProgress: 0,
+    numSpeakers: '',
     serviceUrl: 'http://homelab.local:9000',   // '' = processing unavailable, no actions shown
     serviceDraft: '',
     serviceStatus: 'ok',                       // 'unset' | 'unreachable' | 'ok'
@@ -451,7 +476,7 @@ class Component extends DCLogic {
     sessions: [
       // diarized: transcript.md IS the speaker-labelled version (TD-5). The service returns Speaker N,
       // consistent across the whole recording; the user names them per-session (FR-27).
-      { id: 'rec-000042', name: 'Weekly sync — pricing', recordedAt: '2026-07-17T14:28:01', status: 'diarized', dur: 2583, size: 10.3,
+      { id: 'rec-000042', name: 'Weekly sync — pricing', recordedAt: '2026-07-17T14:28:01', occurredDate: '2026-07-17', occurredTime: '14:00', status: 'diarized', dur: 2583, size: 10.3,
         transcript: [
           { t: '00:00', text: "Okay, I think everyone's here now, so let's get going." },
           { t: '00:06', text: "First thing — the redesign shipped Friday and nothing's on fire yet." },
@@ -480,7 +505,7 @@ class Component extends DCLogic {
       { id: 'rec-000040', name: '', recordedAt: '2026-07-15T17:30:12', status: 'pending', dur: 742, size: 3.0, transcript: [], diarized: [], speakerMap: {} },
       { id: 'rec-000039', name: '', recordedAt: '2026-07-14T20:11:33', status: 'failed', dur: 3061, size: 12.2, transcript: [], diarized: [], speakerMap: {},
         failedCount: 3, failedError: 'model load failed: unable to allocate memory (base.en, INT8)' },
-      { id: 'rec-000038', name: 'Shelf bracket reminder', recordedAt: '2026-07-12T11:00:45', status: 'transcribed', dur: 372, size: 1.5,
+      { id: 'rec-000038', name: 'Shelf bracket reminder', recordedAt: '2026-07-12T11:00:45', occurredDate: '2026-07-12', occurredTime: '', status: 'transcribed', dur: 372, size: 1.5,
         transcript: [
           { t: '00:00', text: "Note to self — pick up the thing from the hardware store." },
           { t: '00:05', text: "The bracket for the shelf that's been leaning for three weeks." },
@@ -505,9 +530,20 @@ class Component extends DCLogic {
     const d=new Date(iso); const p=n=>String(n).padStart(2,'0');
     const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} · ${p(d.getHours())}:${p(d.getMinutes())}`; }
+  // occurred_at (v1.2): a user-ASSERTED date/time — trustworthy, unlike the device clock.
+  // Descriptive only: nothing sorts, looks up, or identifies by it. Time is optional.
+  fmtOccurred(s){ if(!s||!s.occurredDate) return '';
+    const [y,m,d]=s.occurredDate.split('-').map(Number);
+    const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    let out=`${months[m-1]} ${d}, ${y}`;
+    if(s.occurredTime){ const [hh,mm]=s.occurredTime.split(':').map(Number);
+      const ap=hh<12?'AM':'PM', h12=((hh+11)%12)+1; out+=` · ${h12}:${String(mm).padStart(2,'0')} ${ap}`; }
+    return out; }
   identity(s){ const named=!!(s.name||'').trim();
+    // Prefer the user-set date over the clock-derived capture stamp when present.
+    const dateStr=this.fmtOccurred(s) || this.fmtRecorded(s.recordedAt);
     return { title:this.titleOf(s),
-             subtitle: named ? `${s.id} · ${this.fmtRecorded(s.recordedAt)}` : this.fmtRecorded(s.recordedAt) }; }
+             subtitle: named ? `${s.id} · ${dateStr}` : dateStr }; }
   nextId(){ const nums=this.state.sessions
       .map(s=>{ const m=/^rec-(\d+)$/.exec(s.id); return m?parseInt(m[1],10):NaN; })
       .filter(n=>!isNaN(n));
@@ -566,8 +602,10 @@ class Component extends DCLogic {
   openTranscribeModal=()=>{ if(!this._canDiarize()){ this._transcribe(this.state.selectedId); return; } this.setState({transcribeModalId:this.state.selectedId}); };
   closeTranscribeModal=()=>this.setState({transcribeModalId:null});
   chooseLocal=()=>{ const id=this.state.transcribeModalId; this.setState({transcribeModalId:null}); this._transcribe(id); };
+  onNumSpeakers=(e)=>{ const v=e.target.value.replace(/[^0-9]/g,'').slice(0,2); this.setState({numSpeakers:v}); };
   chooseDiarize=()=>{ if(!this._canDiarize()){ this.toast('Diarization unavailable on this service'); this.setState({transcribeModalId:null}); this.go('settings'); return; }
-    this.setState({transcribeModalId:null}); this.diarizeSel(); };
+    const hint=parseInt(this.state.numSpeakers,10); this.setState({transcribeModalId:null});
+    this._diarize(this.state.selectedId, isNaN(hint)?null:hint); };
   transcribeAll=()=>{ const p=this.state.sessions.filter(s=>s.status==='pending'); if(p.length) this._transcribe(p[p.length-1].id); };
   retry=()=>{ this.setState(st=>({ sessions:st.sessions.map(s=>s.id===st.selectedId?{...s,status:'pending'}:s) })); this._transcribe(this.state.selectedId); };
   revertLocal=()=>{ const id=this.state.selectedId;
@@ -586,16 +624,19 @@ class Component extends DCLogic {
       return { transcribeProgress:p }; }); },230); }
   _genTranscript(){ return [
     { t:'00:00', text:"Recording captured on the device, transcribed on the service." },
-    { t:'00:08', text:"The Pi submitted session.m4a and polled until the job finished." },
+    { t:'00:08', text:"The Pi submitted session.m4a in one request and blocked for the result." },
     { t:'00:17', text:"Everything stayed on the local network — no audio left the house." }
   ]; }
 
   // diarization overwrites transcript.md with speaker-labelled version; returns generic Speaker N (TD-5)
-  diarizeSel=()=>{ if(!this._canDiarize()){ this.toast('No processing service configured'); this.go('settings'); return; }
-    const id=this.state.selectedId; if(this.state.diarizingId||this.state.transcribingId)return;
+  diarizeSel=()=>this._diarize(this.state.selectedId, null);
+  _diarize(id, hint){ if(!this._canDiarize()){ this.toast('No processing service configured'); this.go('settings'); return; }
+    if(!id||this.state.diarizingId||this.state.transcribingId)return;
     // Runs on the processing service: may start during a recording, never cancelled by one.
+    // The service job is synchronous and opaque — no stage or progress is reported.
     this.setState(st=>({ device: st.device==='idle'?'processing':st.device,
-      diarizingId:id, diarizeProgress:0, jobRoute:'service' }));
+      diarizingId:id, diarizeProgress:0, jobRoute:'service', numSpeakers:'' }));
+    this.toast(hint?`Diarizing on the service · ${hint}-speaker hint`:'Diarizing on the service…');
     this._proc=setInterval(()=>{ this.setState(st=>{ const p=st.diarizeProgress+3.0;
       if(p>=100){ clearInterval(this._proc); this._proc=null;
         return { diarizingId:null, diarizeProgress:0, jobRoute:null,
@@ -628,6 +669,16 @@ class Component extends DCLogic {
   // FR-29 — naming is a label on the session; identity (s.id) never changes.
   renameSel=(e)=>{ const v=e.target.value; const id=this.state.selectedId;
     this.setState(st=>({ sessions:st.sessions.map(s=>s.id===id?{...s,name:v}:s) })); };
+
+  // occurred_at editing — same model as the name: set / change / clear anytime.
+  setOccurredDate=(e)=>{ const v=e.target.value; const id=this.state.selectedId;
+    this.setState(st=>({ sessions:st.sessions.map(s=>s.id===id?{...s,occurredDate:v, occurredTime: v?s.occurredTime:''}:s) }));
+    this.toast(v?'Session date set':'Session date cleared'); };
+  setOccurredTime=(e)=>{ const v=e.target.value; const id=this.state.selectedId;
+    this.setState(st=>({ sessions:st.sessions.map(s=>s.id===id?{...s,occurredTime:v}:s) })); };
+  clearOccurred=()=>{ const id=this.state.selectedId;
+    this.setState(st=>({ sessions:st.sessions.map(s=>s.id===id?{...s,occurredDate:'',occurredTime:''}:s) }));
+    this.toast('Session date cleared'); };
 
   onServiceInput=(e)=>this.setState({serviceDraft:e.target.value});
   saveService=()=>{ const u=this.state.serviceDraft.trim();
@@ -673,8 +724,13 @@ class Component extends DCLogic {
 
       const sourceChip=(bg)=>`display:inline-flex;align-items:center;font-family:var(--font-sans);font-size:12px;font-weight:600;padding:3px 11px;border-radius:var(--radius-pill);color:#fff;background:${bg};`;
 
+      const occDisp=this.fmtOccurred(raw); const occSeg=occDisp?` · Date: ${occDisp}`:'';
       sel={ ...raw, ...pid, statusLabel:meta.label, badgeStyle:this.badge(raw.status,meta.color),
-        metaLine:`${raw.id} · ${this.fmtRecorded(raw.recordedAt)} · ${this.fmtDur(raw.dur)} · ${raw.size.toFixed(1)} MB · session.m4a`,
+        metaLine:`${raw.id} · ${this.fmtDur(raw.dur)} · ${raw.size.toFixed(1)} MB · session.m4a`,
+        occurredDate:raw.occurredDate||'', occurredTime:raw.occurredTime||'',
+        occurredSet:!!raw.occurredDate, occurredUnset:!raw.occurredDate,
+        plainCaption:`transcript.md${occSeg} · text only, no speaker labels`,
+        diarizedCaption:`transcript.md${occSeg} · diarized on the processing service`,
         durationClock:this.fmtClock(raw.dur),
         isFailed:raw.status==='failed', isTranscribing, isDiarizing, isDiarized, isPlain, showTranscript,
         showTranscribeCTA:raw.status==='pending' && !isTranscribing && !isDiarizing,
@@ -720,6 +776,11 @@ class Component extends DCLogic {
 
     const diarizeBtnStyle=`font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:var(--radius-md);cursor:pointer;display:inline-flex;align-items:center;gap:8px;border:1px solid #9b59b6;background:#9b59b6;color:#fff;`;
 
+    // A service job is synchronous and opaque: no stage, no percentage — show an indeterminate
+    // bar. Local transcription runs on the Pi and reports real progress (transcribe.md, api.md).
+    const indetBar=(c)=>`height:100%;width:100%;background:linear-gradient(90deg,transparent,${c},transparent);background-size:40% 100%;background-repeat:no-repeat;animation:indet 1.15s ease-in-out infinite;`;
+    const txService = st.transcribingId && st.jobRoute==='service';
+
     const svcColor = svcOn?'var(--color-success)':(st.serviceUrl?'var(--color-error)':'var(--color-muted)');
     const svcLabel = svcOn?'Connected':(st.serviceUrl?'Unreachable':'Not set — using this device');
     const svcBadgeStyle=`display:inline-flex;align-items:center;font-family:var(--font-sans);font-size:12px;font-weight:600;padding:3px 11px;border-radius:var(--radius-pill);color:#fff;background:${svcColor};`;
@@ -748,20 +809,23 @@ class Component extends DCLogic {
 
       sel, speakerRows,
       download:()=>this.toast('Downloading session.m4a…'),
+      downloadTranscript:()=>this.toast('Exporting transcript.md…'),
+      numSpeakers:st.numSpeakers, onNumSpeakers:this.onNumSpeakers,
       askDelete:this.askDelete,
       togglePlay:this.togglePlay,
       playIconStyle: st.playing?'width:16px;height:16px;background:#fff;border-radius:3px;':'width:0;height:0;border-left:16px solid #fff;border-top:10px solid transparent;border-bottom:10px solid transparent;margin-left:4px;',
       playPosLabel:this.fmtClock(st.playPos),
       transcribeSel:this.transcribeSel, retry:this.retry, revertLocal:this.revertLocal,
       renameSel:this.renameSel,
-      transcribePctLabel:`${Math.round(st.transcribeProgress)}%`,
-      transcribeBarStyle:`height:100%;width:${st.transcribeProgress}%;background:#FFB300;transition:width .2s linear;`,
+      setOccurredDate:this.setOccurredDate, setOccurredTime:this.setOccurredTime, clearOccurred:this.clearOccurred,
+      transcribePctLabel: txService ? '' : `${Math.round(st.transcribeProgress)}%`,
+      transcribeBarStyle: txService ? indetBar('#FFB300') : `height:100%;width:${st.transcribeProgress}%;background:#FFB300;transition:width .2s linear;`,
       revertBtnStyle:`font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:var(--radius-md);cursor:pointer;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);`,
       diarizeSel:this.diarizeSel, diarizeBtnStyle,
       diarizeBtnLabel:'Diarize',
       diarizeBtnTitle:'Label speakers on the processing service — replaces this transcript',
-      diarizePctLabel:`${Math.round(st.diarizeProgress)}%`,
-      diarizeBarStyle:`height:100%;width:${st.diarizeProgress}%;background:var(--color-secondary);transition:width .2s linear;`,
+      diarizePctLabel:'',
+      diarizeBarStyle: indetBar('var(--color-secondary)'),
       playBarStyle,
 
       serviceDraft:st.serviceDraft, onServiceInput:this.onServiceInput,
@@ -773,7 +837,7 @@ class Component extends DCLogic {
         : 'Runs on this device. No service needed; expect roughly 20–35 minutes for a long session.',
       transcribeRunLabel: route==='service' ? 'Transcribing on the service…' : 'Transcribing on this device…',
       transcribeFootLabel: route==='service'
-        ? 'On the processing service · recording is unaffected'
+        ? 'On the processing service · progress not reported (opaque) · recording is unaffected'
         : 'faster-whisper on the Pi · a new recording cancels this',
 
       confirmOpen:st.confirmId!==null, cancelDelete:this.cancelDelete, doDelete:this.doDelete,
