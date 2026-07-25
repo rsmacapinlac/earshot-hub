@@ -65,19 +65,39 @@ def test_audio_404_before_finalize(app, client):
     assert client.get(f"/v1/sessions/{render_session_id(sid)}/audio").status_code == 404
 
 
-def test_rename_updates_session_and_transcript_header(app, client):
+def test_patch_session_updates_name_occurred_at_and_transcript_header(app, client):
     sid = _seed(app.store)
     app.store.write_transcript_result(sid, [Segment(0.0, 1.0, "hi there")])
 
-    r = client.patch(f"/v1/sessions/{render_session_id(sid)}", json={"name": "Renamed"})
-    assert r.status_code == 200 and r.get_json()["name"] == "Renamed"
+    r = client.patch(
+        f"/v1/sessions/{render_session_id(sid)}",
+        json={"name": "Renamed", "occurred_at": "2026-07-20T14:00"},
+    )
+    body = r.get_json()
+    assert r.status_code == 200
+    assert body["name"] == "Renamed"
+    assert body["occurred_at"] == "2026-07-20T14:00"
     # The transcript.md header is rewritten in place.
     md = client.get(f"/v1/sessions/{render_session_id(sid)}/transcript",
                     headers={"Accept": "text/markdown"}).get_data(as_text=True)
     assert md.startswith("# Renamed")
+    assert "**Date:** 2026-07-20 14:00" in md
 
-    cleared = client.patch(f"/v1/sessions/{render_session_id(sid)}", json={"name": None})
+    cleared = client.patch(
+        f"/v1/sessions/{render_session_id(sid)}",
+        json={"name": None, "occurred_at": None},
+    )
     assert cleared.get_json()["name"] is None
+    assert cleared.get_json()["occurred_at"] is None
+    md = client.get(f"/v1/sessions/{render_session_id(sid)}/transcript",
+                    headers={"Accept": "text/markdown"}).get_data(as_text=True)
+    assert "**Date:**" not in md
+
+
+def test_patch_session_rejects_invalid_occurred_at(app, client):
+    sid = _seed(app.store)
+    r = client.patch(f"/v1/sessions/{render_session_id(sid)}", json={"occurred_at": "not a date"})
+    assert r.status_code == 400
 
 
 def test_delete_session(app, client):

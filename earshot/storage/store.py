@@ -11,7 +11,7 @@ from __future__ import annotations
 import shutil
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -107,13 +107,58 @@ class Store:
             shutil.rmtree(d, ignore_errors=True)
         self.db.delete_session(session_id)
 
-    def set_name(self, session_id: int, name: str | None) -> None:
-        self.db.update_session(session_id, name=name)
-        # Renaming rewrites the transcript.md header in place (rpi/specs/processing.md#fr-16).
+    def set_session_fields(
+        self,
+        session_id: int,
+        *,
+        name: str | None | object = ...,
+        occurred_at: str | None | object = ...,
+    ) -> None:
+        fields: dict[str, Any] = {}
+        if name is not ...:
+            fields["name"] = name
+        if occurred_at is not ...:
+            fields["occurred_at"] = occurred_at
+        if not fields:
+            return
+        self.db.update_session(session_id, **fields)
+        # Renaming or setting the user-authored date rewrites only the transcript.md header.
         if self.has_transcript(session_id):
             self._render_transcript(session_id, self.read_current_segments(session_id))
         if self.m4a_path(session_id).exists():
             self.write_status_json(session_id)
+
+    def set_name(self, session_id: int, name: str | None) -> None:
+        self.set_session_fields(session_id, name=name)
+
+    def set_occurred_at(self, session_id: int, occurred_at: str | None) -> None:
+        self.set_session_fields(session_id, occurred_at=occurred_at)
+
+    @staticmethod
+    def normalize_occurred_at(value: str | None) -> str | None:
+        """Validate and canonicalize the user-set session date/time.
+
+        Accepted API forms are ISO date (`YYYY-MM-DD`) or ISO date-time. Date-times
+        are stored at minute precision (`YYYY-MM-DDTHH:MM`) because the UI exposes
+        date + optional time, not seconds or timezone management.
+        """
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("occurred_at must be a string or null")
+        raw = value.strip()
+        if not raw:
+            raise ValueError("occurred_at must not be empty")
+        try:
+            date.fromisoformat(raw)
+            return raw
+        except ValueError:
+            pass
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError as exc:
+            raise ValueError("occurred_at must be an ISO date or date-time") from exc
+        return dt.strftime("%Y-%m-%dT%H:%M")
 
     # -- transcripts (job results) ---------------------------------------- #
 
@@ -165,6 +210,7 @@ class Store:
             duration=row["duration"] or 0.0,
             segments=segments,
             speaker_names=names,
+            occurred_at=row["occurred_at"],
         )
         self._atomic_write(self.session_dir(session_id) / TRANSCRIPT_MD, md)
 
@@ -242,6 +288,7 @@ class Store:
         return {
             "id": render_session_id(session_id),
             "name": row["name"],
+            "occurred_at": row["occurred_at"],
             "state": self.derive_state(row, active_id),
             "created_at": row["created_at"],
             "duration": row["duration"],
@@ -310,6 +357,7 @@ class Store:
             "status": status,
             "device": socket.gethostname(),
             "name": row["name"],
+            "occurred_at": row["occurred_at"],
             "speakers": speakers,
             "created_at": row["created_at"],
             "duration": row["duration"],

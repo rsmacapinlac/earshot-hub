@@ -2,7 +2,7 @@
 
 The **Raspberry Pi** implementation of [earshot](https://github.com/rsmacapinlac/earshot-spec) — a local-first, desk-mounted conversation recorder with a LAN web UI. Audio is captured on-device, encoded to a single per-session file, and transcribed locally with no internet or API keys required. An optional LAN processing service adds speed and speaker diarization.
 
-> **Status: complete (v1).** Built to the `rpi/` track of the spec across 10 milestones — API contract, HAL + stub, recording, storage recovery, state machine, jobs + local transcription, processing-service integration + diarization, web UI, installer + systemd, and config validation. Hardware-dependent behaviour is validated per [`docs/ON_DEVICE_SMOKE.md`](docs/ON_DEVICE_SMOKE.md); everything else has an off-device test suite (`pytest`).
+> **Status: complete (v1.2).** Built to the `rpi/` track of the spec across 10 milestones — API contract, HAL + stub, recording, storage recovery, state machine, jobs + local transcription, processing-service integration + diarization, web UI, installer + systemd, and config validation. Hardware-dependent behaviour is validated per [`docs/ON_DEVICE_SMOKE.md`](docs/ON_DEVICE_SMOKE.md); everything else has an off-device test suite (`pytest`).
 
 ## Hardware
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: earshot device API
-  version: "1.0"
+  version: "1.2"
   description: >
     The device's one interface for operating it (rpi/specs/api.md). The web UI is a
     client of this API; there is no privileged internal path. OpenAPI 3.1 component
@@ -72,12 +72,12 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: patchSession
-      summary: Set or clear the session name.
+      summary: Set or clear the session name and/or user-asserted session date/time.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/NameUpdate" }
+            schema: { $ref: "#/components/schemas/SessionPatch" }
       responses:
         "200":
           description: The updated session.
@@ -447,11 +447,14 @@ components:
     Session:
       type: object
       additionalProperties: false
-      required: [id, name, state, created_at, duration, size, has_transcript, diarized]
+      required: [id, name, occurred_at, state, created_at, duration, size, has_transcript, diarized]
       properties:
         id: { $ref: "#/components/schemas/SessionIdString" }
         name:
           type: [string, "null"]
+        occurred_at:
+          type: [string, "null"]
+          description: User-set ISO date or date-time; descriptive only.
         state: { $ref: "#/components/schemas/SessionState" }
         created_at: { type: string }
         duration:
@@ -468,10 +471,11 @@ components:
       # additionalProperties:false does not reject the extra fields).
       type: object
       additionalProperties: false
-      required: [id, name, state, created_at, duration, size, has_transcript, diarized, speakers, job]
+      required: [id, name, occurred_at, state, created_at, duration, size, has_transcript, diarized, speakers, job]
       properties:
         id: { $ref: "#/components/schemas/SessionIdString" }
         name: { type: [string, "null"] }
+        occurred_at: { type: [string, "null"] }
         state: { $ref: "#/components/schemas/SessionState" }
         created_at: { type: string }
         duration: { type: [number, "null"] }
@@ -503,6 +507,17 @@ components:
       properties:
         name:
           type: [string, "null"]
+
+    SessionPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: [string, "null"]
+        occurred_at:
+          type: [string, "null"]
+          description: ISO date (`YYYY-MM-DD`) or date-time (`YYYY-MM-DDTHH:MM`); null clears it.
 
     StopRecordingResult:
       oneOf:

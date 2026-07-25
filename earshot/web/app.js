@@ -51,6 +51,7 @@ const api = {
   stopRec: () => send("DELETE", "/v1/recording"),
   enqueue: (id, kind, opts) => send("POST", "/v1/sessions/" + id + "/jobs", Object.assign({ kind }, opts || {})),
   bulk: (kind) => send("POST", "/v1/jobs", { kind, target: "pending" }),
+  patchSession: (id, fields) => send("PATCH", "/v1/sessions/" + id, fields),
   rename: (id, name) => send("PATCH", "/v1/sessions/" + id, { name }),
   del: (id) => send("DELETE", "/v1/sessions/" + id),
   setSpeaker: (id, label, name) => send("PUT", "/v1/sessions/" + id + "/speakers/" + encodeURIComponent(label), { name }),
@@ -83,6 +84,36 @@ function fmtClock(sec) { sec = Math.max(0, Math.round(sec || 0)); const H = Math
 function fmtDur(sec) { sec = Math.round(sec || 0); const H = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; if (H) return `${H}h ${m}m`; if (m) return `${m}m ${s}s`; return `${s}s`; }
 function fmtSize(bytes) { return ((bytes || 0) / 1e6).toFixed(1) + " MB"; }
 function titleOf(s) { return (s.name || "").trim() || s.id; }
+function splitOccurred(value) {
+  if (!value) return { date: "", time: "" };
+  const parts = String(value).split("T");
+  return { date: parts[0] || "", time: (parts[1] || "").slice(0, 5) };
+}
+function composeOccurred(date, time) { return date ? (time ? `${date}T${time}` : date) : null; }
+function fmtDateTime(iso) {
+  if (!iso) return "Date unknown";
+  const d = new Date(iso); if (Number.isNaN(d.getTime())) return iso;
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fmtOccurred(value) {
+  const p = splitOccurred(value); if (!p.date) return "";
+  const [y, m, d] = p.date.split("-").map(Number);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  let out = Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d) ? `${months[m - 1]} ${d}, ${y}` : p.date;
+  if (p.time) {
+    const [hh, mm] = p.time.split(":").map(Number);
+    if (Number.isFinite(hh) && Number.isFinite(mm)) {
+      const ap = hh < 12 ? "AM" : "PM", h12 = ((hh + 11) % 12) + 1;
+      out += ` · ${h12}:${pad(mm)} ${ap}`;
+    }
+  }
+  return out;
+}
+function sessionSubtitle(s) {
+  const date = fmtOccurred(s.occurred_at) || fmtDateTime(s.created_at);
+  return (s.name || "").trim() ? `${s.id} · ${date}` : date;
+}
 function badge(state) { const m = STATUS_META[state] || STATUS_META.pending; return h("span", { class: "badge", style: { background: m.color } }, m.label); }
 
 // ---- state ----------------------------------------------------------------
@@ -271,7 +302,7 @@ function viewList() {
       h("span", { class: "dot", style: { background: m.color } }),
       h("div", { style: { minWidth: "0", flex: "1" } },
         h("div", { style: { fontWeight: "600", fontSize: "15px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, titleOf(s)),
-        h("div", { class: "mono muted", style: { fontSize: "12px", marginTop: "3px" } }, s.name ? s.id : "unnamed")),
+        h("div", { class: "mono muted", style: { fontSize: "12px", marginTop: "3px" } }, sessionSubtitle(s))),
       h("div", { id: s.state === "recording" ? "live-row-dur" : null, class: "mono secondary", style: { fontSize: "13px", width: "96px", textAlign: "right" } },
         s.state === "recording" ? fmtClock(S.status && S.status.recording ? S.status.recording.elapsed : 0) : fmtDur(s.duration)),
       h("div", { class: "mono muted", style: { fontSize: "13px", width: "82px", textAlign: "right" } }, fmtSize(s.size)),
@@ -296,15 +327,29 @@ function viewDetail() {
 
   wrap.appendChild(h("a", { href: "#/", style: { cursor: "pointer", display: "inline-flex", gap: "6px", fontSize: "14px", fontWeight: "600", color: "var(--color-text-secondary)", textDecoration: "none", marginBottom: "20px" } }, "← All sessions"));
 
-  const onRename = debounce((v) => api.rename(d.id, v.trim() || null).catch(fail), 500);
+  const onRename = debounce((v) => api.patchSession(d.id, { name: v.trim() || null }).catch(fail), 500);
+  const onOccurred = debounce((date, time) => api.patchSession(d.id, { occurred_at: composeOccurred(date, time) }).catch(fail), 500);
+  const occ = splitOccurred(d.occurred_at);
   const nameInput = h("input", { class: "name-input", "data-focus": "name", value: d.name || "", placeholder: d.id,
     "aria-label": "Session name", title: "Name this session — the ID stays its identity",
     oninput: (e) => onRename(e.target.value) });
+  const dateInput = h("input", { class: "field", "data-focus": "occurred-date", type: "date", value: occ.date,
+    style: { width: "auto", padding: "6px 9px", fontSize: "13px" },
+    "aria-label": "Session date", title: "When this conversation actually happened — optional",
+    oninput: (e) => { const time = document.getElementById("occurred-time"); onOccurred(e.target.value, time ? time.value : ""); } });
+  const timeInput = h("input", { id: "occurred-time", class: "field", "data-focus": "occurred-time", type: "time", value: occ.time,
+    style: { width: "auto", padding: "6px 9px", fontSize: "13px" },
+    "aria-label": "Session time", title: "Optional time",
+    oninput: (e) => { const date = document.querySelector('[data-focus="occurred-date"]'); onOccurred(date ? date.value : "", e.target.value); } });
   wrap.appendChild(h("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" } },
     h("div", {},
       h("div", { style: { display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" } }, nameInput, badge(d.state)),
+      h("div", { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginTop: "10px" } },
+        h("span", { class: "mono muted", style: { fontSize: "12px" } }, "Date"), dateInput, timeInput,
+        d.occurred_at ? h("button", { class: "btn", style: { padding: "6px 12px" }, onclick: () => api.patchSession(d.id, { occurred_at: null }).then(() => loadDetail(d.id).then(renderView)).catch(fail) }, "Clear") :
+          h("span", { class: "mono muted", style: { fontSize: "12px" } }, "optional · user-set")),
       h("div", { class: "mono muted", style: { fontSize: "13px", marginTop: "8px" } },
-        `${d.id} · ${fmtDur(d.duration)} · ${fmtSize(d.size)} · session.m4a`)),
+        `${d.id}${d.occurred_at ? " · Date: " + fmtOccurred(d.occurred_at) : ""} · ${fmtDur(d.duration)} · ${fmtSize(d.size)} · session.m4a`)),
     h("div", { style: { display: "flex", gap: "9px", flexWrap: "wrap" } },
       d.state !== "recording" ? h("a", { class: "btn", href: `/v1/sessions/${d.id}/audio?download`, "aria-label": "Download audio" }, "↓ Download") : null,
       h("button", { class: "btn danger", onclick: () => (S.modal = { type: "delete", id: d.id }, renderModal()) }, "Delete"))));

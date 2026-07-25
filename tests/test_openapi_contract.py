@@ -104,6 +104,7 @@ def test_session_list_example_validates():
         "sessions": [
             {
                 "id": "rec-000042", "name": "Weekly sync — pricing",
+                "occurred_at": "2026-07-20T14:00",
                 "state": "diarized", "created_at": "2026-07-17T14:28:01",
                 "duration": 2583.4, "size": 10289152,
                 "has_transcript": True, "diarized": True,
@@ -117,7 +118,8 @@ def test_session_unnamed_and_unfinalized_validates():
     payload = {
         "sessions": [
             {
-                "id": "rec-000044", "name": None, "state": "recording",
+                "id": "rec-000044", "name": None, "occurred_at": None,
+                "state": "recording",
                 "created_at": "2026-07-17T14:28:01", "duration": None,
                 "size": None, "has_transcript": False, "diarized": False,
             }
@@ -179,6 +181,10 @@ def test_stop_recording_discarded_result_validates():
 @pytest.mark.parametrize("body,schema", [
     ({"name": "Standup"}, "NameUpdate"),
     ({"name": None}, "NameUpdate"),
+    ({"name": "Standup"}, "SessionPatch"),
+    ({"occurred_at": "2026-07-20"}, "SessionPatch"),
+    ({"occurred_at": "2026-07-20T14:00"}, "SessionPatch"),
+    ({"occurred_at": None}, "SessionPatch"),
     ({"kind": "transcribe"}, "JobCreate"),
     ({"kind": "diarize", "target": "pending"}, "BulkJobCreate"),
     ({"url": "http://homelab.local:9000"}, "ServiceUpdate"),
@@ -194,6 +200,7 @@ def test_request_bodies_validate(body, schema):
 def test_unknown_request_field_is_rejected():
     # rpi/specs/api.md: unknown request fields are rejected, not ignored.
     assert not validation.is_valid({"name": "x", "extra": 1}, "NameUpdate")
+    assert not validation.is_valid({"occurred_at": "2026-07-20", "extra": 1}, "SessionPatch")
 
 
 def test_bad_enum_is_rejected():
@@ -203,7 +210,8 @@ def test_bad_enum_is_rejected():
 def test_bad_session_id_pattern_is_rejected():
     bad = {
         "sessions": [{
-            "id": "2026-07-17", "name": None, "state": "pending",
+            "id": "2026-07-17", "name": None, "occurred_at": None,
+            "state": "pending",
             "created_at": "x", "duration": None, "size": None,
             "has_transcript": False, "diarized": False,
         }]

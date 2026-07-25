@@ -151,9 +151,15 @@ def _adopt(store, sid, directory, recovered) -> None:
 
     created_at = meta.get("created_at") or datetime.now().isoformat()
     diarized = 1 if meta.get("status") == "diarized" else 0
+    occurred_at = meta.get("occurred_at")
+    try:
+        occurred_at = store.normalize_occurred_at(occurred_at) if occurred_at is not None else None
+    except ValueError:
+        occurred_at = None
     db.adopt_session(
         sid, created_at,
-        name=meta.get("name"), duration=duration, size=size, diarized=diarized,
+        name=meta.get("name"), occurred_at=occurred_at,
+        duration=duration, size=size, diarized=diarized,
     )
     speakers = meta.get("speakers") or {}
     if isinstance(speakers, dict):
