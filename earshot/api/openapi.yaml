@@ -290,7 +290,7 @@ paths:
               schema: { $ref: "#/components/schemas/JobList" }
     post:
       operationId: bulkEnqueueJobs
-      summary: Bulk enqueue (e.g. transcribe all pending, oldest first).
+      summary: Bulk enqueue (transcribe pending, or diarize all undiarized, oldest first).
       requestBody:
         required: true
         content:
@@ -484,7 +484,7 @@ components:
 
     SessionState:
       type: string
-      enum: [recording, pending, transcribing, diarizing, transcribed, diarized, failed]
+      enum: [recording, pending, transcribed, diarized, failed]
 
     Session:
       type: object
@@ -670,8 +670,11 @@ components:
         kind: { $ref: "#/components/schemas/JobKind" }
         target:
           type: string
-          enum: [pending]
-          description: Which sessions to enqueue. "pending" = every pending session.
+          enum: [pending, undiarized]
+          description: >
+            Which sessions to enqueue. "pending" = every pending audio-only session
+            for plain transcription; "undiarized" = every finalized session whose
+            current transcript is not diarized, for bulk diarization.
 
     # ---- Processing service ------------------------------------------------
 

@@ -294,8 +294,35 @@ def test_diarize_without_service_conflicts(make_app):
     sid = seed_session(app.store)
     resp = client.post(f"/v1/sessions/{render_session_id(sid)}/jobs", json={"kind": "diarize"})
     assert resp.status_code == 409 and resp.get_json()["error"]["code"] == "diarize_unavailable"
-    bulk = client.post("/v1/jobs", json={"kind": "diarize", "target": "pending"})
+    bulk = client.post("/v1/jobs", json={"kind": "diarize", "target": "undiarized"})
     assert bulk.status_code == 409
+
+
+def test_queued_job_is_session_overlay_not_state(make_app):
+    block = threading.Event()
+    app = make_app(factory=lambda: FakeTranscriber(block=block))
+    client = app.flask_app.test_client()
+    busy = seed_session(app.store)
+    queued = seed_session(app.store)
+
+    client.post(f"/v1/sessions/{render_session_id(busy)}/jobs", json={"kind": "transcribe"})
+    assert _poll(lambda: client.get("/v1/status").get_json()["state"] == "processing")
+    job = client.post(f"/v1/sessions/{render_session_id(queued)}/jobs",
+                      json={"kind": "transcribe"}).get_json()
+
+    detail = client.get(f"/v1/sessions/{render_session_id(queued)}").get_json()
+    assert detail["state"] == "pending"
+    assert detail["job"]["id"] == job["id"]
+    assert detail["job"]["state"] == "queued"
+    listed = client.get("/v1/sessions").get_json()["sessions"]
+    assert next(s for s in listed if s["id"] == render_session_id(queued))["state"] == "pending"
+    block.set()
+
+
+def test_cancel_unknown_job_is_idempotent(make_app):
+    app = make_app()
+    client = app.flask_app.test_client()
+    assert client.delete("/v1/jobs/999999").status_code == 204
 
 
 def test_bulk_transcribe_pending(make_app):

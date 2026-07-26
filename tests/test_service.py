@@ -204,6 +204,23 @@ def test_diarize_via_service_writes_speakers(make_app):
     assert all(s["segments"] == 1 for s in speakers)
 
 
+def test_bulk_diarize_targets_all_undiarized_sessions(make_app):
+    state = FakeState()
+    app = make_app(state=state)
+    client = app.flask_app.test_client()
+    audio_only = _seed(app.store)
+    plain = _seed(app.store)
+    done = _seed(app.store)
+    app.store.write_transcript_result(plain, [Segment(0.0, 1.0, "plain")])
+    app.store.write_transcript_result(done, [Segment(0.0, 1.0, "labelled", "Speaker 1")], diarized=True)
+
+    resp = client.post("/v1/jobs", json={"kind": "diarize", "target": "undiarized"})
+    assert resp.status_code == 202
+    jobs = resp.get_json()["jobs"]
+    assert [j["session_id"] for j in jobs] == [_sid(audio_only), _sid(plain)]
+    assert all(j["kind"] == "diarize" for j in jobs)
+
+
 def test_transcribe_routes_to_reachable_service(make_app):
     state = FakeState(caps={"transcribe": True, "diarize": False},
                       segments=[Segment(0.0, 2.0, "just words")])

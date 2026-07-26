@@ -47,6 +47,7 @@ const api = {
   transcript: (id) => getJSON("/v1/sessions/" + id + "/transcript", { Accept: "application/json" }),
   speakers: (id) => getJSON("/v1/sessions/" + id + "/speakers"),
   service: () => getJSON("/v1/service"),
+  jobs: () => getJSON("/v1/jobs"),
   startRec: () => send("POST", "/v1/recording"),
   stopRec: () => send("DELETE", "/v1/recording"),
   upload: (file, meta) => {
@@ -60,7 +61,8 @@ const api = {
     });
   },
   enqueue: (id, kind, opts) => send("POST", "/v1/sessions/" + id + "/jobs", Object.assign({ kind }, opts || {})),
-  bulk: (kind) => send("POST", "/v1/jobs", { kind, target: "pending" }),
+  bulk: (kind, target) => send("POST", "/v1/jobs", { kind, target }),
+  cancelJob: (id) => send("DELETE", "/v1/jobs/" + id),
   patchSession: (id, fields) => send("PATCH", "/v1/sessions/" + id, fields),
   rename: (id, name) => send("PATCH", "/v1/sessions/" + id, { name }),
   del: (id) => send("DELETE", "/v1/sessions/" + id),
@@ -73,8 +75,8 @@ const api = {
 const STATUS_META = {
   recording: { label: "Recording", color: "#ef4444" },
   pending: { label: "Audio only", color: "#c78a3d" },
-  transcribing: { label: "Transcribing", color: "#FFB300" },
-  diarizing: { label: "Diarizing", color: "#FFB300" },
+  queued: { label: "Queued", color: "#FFB300" },
+  processing: { label: "Processing", color: "#FFB300" },
   transcribed: { label: "Transcribed", color: "var(--color-primary)" },
   diarized: { label: "Transcribed with Speakers", color: "#9b59b6" },
   failed: { label: "Failed", color: "var(--color-error)" },
@@ -125,13 +127,23 @@ function sessionSubtitle(s) {
   return (s.name || "").trim() ? `${s.id} · ${date}` : date;
 }
 function badge(state) { const m = STATUS_META[state] || STATUS_META.pending; return h("span", { class: "badge", style: { background: m.color } }, m.label); }
+function jobForSession(id) {
+  return (S.jobs || []).find((j) => j.session_id === id && (j.state === "queued" || j.state === "running")) || null;
+}
+function sessionDisplayState(s) {
+  const j = s.job || jobForSession(s.id);
+  if (j && j.state === "queued") return "queued";
+  if (j && j.state === "running") return "processing";
+  return s.state;
+}
+function activeJob(job) { return job && (job.state === "queued" || job.state === "running"); }
 
 // ---- state ----------------------------------------------------------------
 const S = {
-  status: null, sessions: [], service: null,
+  status: null, sessions: [], jobs: [], service: null,
   detail: null, segments: [], speakers: [],
   route: { name: "list" },
-  modal: null, // {type:'delete'|'transcribe', id}
+  modal: null, // {type:'delete'|'transcribe'|'upload', id, diarize?}
   lastStructFp: null,
 };
 // The parts of status that change the *layout* (vs. a ticking counter).
@@ -214,6 +226,7 @@ document.getElementById("brand").addEventListener("click", () => (location.hash 
 
 // ---- data loads -----------------------------------------------------------
 async function refreshSessions() { try { S.sessions = (await api.sessions()).sessions; } catch (e) { fail(e); } }
+async function refreshJobs() { try { S.jobs = (await api.jobs()).jobs; } catch (e) { fail(e); } }
 async function loadDetail(id) {
   try {
     S.detail = await api.session(id);
@@ -294,11 +307,14 @@ function viewList() {
   const wrap = h("div", { class: "view" });
   wrap.appendChild(recordHero());
 
-  const pending = S.sessions.filter((s) => s.state === "pending");
+  const pending = S.sessions.filter((s) => s.state === "pending" && !jobForSession(s.id));
+  const canDiarize = S.service && S.service.reachable && S.service.capabilities && S.service.capabilities.diarize;
+  const undiarized = S.sessions.filter((s) => (s.state === "pending" || s.state === "transcribed") && !jobForSession(s.id));
+  const showBulk = pending.length || (canDiarize && undiarized.length);
   const head = h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "40px 0 16px", gap: "16px", flexWrap: "wrap" } },
     h("div", {}, h("h2", { class: "title" }, "Sessions"),
       h("div", { class: "mono muted", style: { fontSize: "13px", marginTop: "4px" } }, `${S.sessions.length} on device`)),
-    pending.length ? h("button", { class: "btn primary ghost", onclick: () => api.bulk("transcribe").then(() => toast("Transcribing all pending")).catch(fail) }, `Transcribe all pending (${pending.length})`) : null);
+    showBulk ? h("button", { class: "btn primary ghost", onclick: () => openTranscribeModal("__all__") }, "Transcribe all") : null);
   wrap.appendChild(head);
 
   if (S.sessions.length === 0) {
@@ -313,7 +329,8 @@ function viewList() {
 
   const rows = h("div", { class: "rows" });
   for (const s of S.sessions) {
-    const m = STATUS_META[s.state] || STATUS_META.pending;
+    const displayState = sessionDisplayState(s);
+    const m = STATUS_META[displayState] || STATUS_META.pending;
     rows.appendChild(h("div", { class: "card srow", role: "link", tabindex: "0",
       "aria-label": `Open ${titleOf(s)}`,
       onclick: () => (location.hash = "#/s/" + s.id),
@@ -325,7 +342,7 @@ function viewList() {
       h("div", { id: s.state === "recording" ? "live-row-dur" : null, class: "mono secondary", style: { fontSize: "13px", width: "96px", textAlign: "right" } },
         s.state === "recording" ? fmtClock(S.status && S.status.recording ? S.status.recording.elapsed : 0) : fmtDur(s.duration)),
       h("div", { class: "mono muted", style: { fontSize: "13px", width: "82px", textAlign: "right" } }, fmtSize(s.size)),
-      h("div", { style: { width: "200px", display: "flex", justifyContent: "flex-end" } }, badge(s.state)),
+      h("div", { style: { width: "200px", display: "flex", justifyContent: "flex-end" } }, badge(displayState)),
       h("span", { class: "muted", "aria-hidden": "true" }, "›")));
   }
   wrap.appendChild(rows);
@@ -381,18 +398,21 @@ function viewDetail() {
 
   const proc = processingFor(d.id);
   const job = d.job;
-  const isTranscribing = proc && proc.kind === "transcribe";
-  const isDiarizing = proc && proc.kind === "diarize";
+  const active = activeJob(job);
+  const running = job && job.state === "running";
+  const queued = job && job.state === "queued";
 
   if (d.state === "failed" && job && job.state === "failed") {
     wrap.appendChild(failedBanner(d, job));
-  } else if (isTranscribing || isDiarizing) {
-    wrap.appendChild(progressCard(proc));
+  } else if (queued) {
+    wrap.appendChild(queuedCard(job));
+  } else if (running) {
+    wrap.appendChild(progressCard(proc ? Object.assign({}, job, proc, { id: job.id }) : job));
   } else if (d.state === "pending") {
     wrap.appendChild(transcribeCTA(d));
   }
 
-  if (d.has_transcript && !isTranscribing && !isDiarizing) {
+  if (d.has_transcript && !active) {
     wrap.appendChild(transcriptSection(d));
   }
   return wrap;
@@ -412,27 +432,67 @@ function progressText(proc) {
   return proc.stage || "Processing…";
 }
 
+function queuedCard(job) {
+  const kind = job.kind === "diarize" ? "diarization" : "transcription";
+  const queued = (S.jobs || []).filter((j) => j.state === "queued").sort((a, b) => a.id - b.id);
+  const pos = queued.findIndex((j) => j.id === job.id) + 1;
+  const line = pos > 0 ? `Position ${pos} in the queue · starts when the device is free` : "Waiting in the queue · starts when the device is free";
+  return h("div", { class: "card", style: { marginTop: "22px", padding: "22px 24px", display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" } },
+    h("span", { style: { width: "12px", height: "12px", borderRadius: "50%", background: "#FFB300", boxShadow: "0 0 0 4px rgba(255,179,0,.2)", flexShrink: "0" } }),
+    h("div", { style: { flex: "1", minWidth: "200px" } },
+      h("div", { style: { fontWeight: "600" } }, `Queued for ${kind}`),
+      h("div", { class: "mono muted", style: { fontSize: "12px", marginTop: "4px" } }, line)),
+    h("button", { class: "btn danger", onclick: () => cancelJob(job.id) }, "Cancel job"));
+}
+
 function progressCard(proc) {
   const diar = proc.kind === "diarize";
   const pctText = progressText(proc);
   const bar = proc.progress != null ? h("div", { style: { height: "8px", borderRadius: "99px", background: "var(--color-surface-hover)", overflow: "hidden", marginTop: "14px", border: "1px solid var(--color-border)" } },
-    h("div", { id: "live-progress", style: { height: "100%", width: (proc.progress * 100) + "%", background: "#FFB300", transition: "width .3s" } })) : null;
+    h("div", { id: "live-progress", style: { height: "100%", width: (proc.progress * 100) + "%", background: "#FFB300", transition: "width .3s" } })) :
+    h("div", { class: "indet", style: { marginTop: "14px" } }, h("div"));
   return h("div", { class: "card", style: { marginTop: "22px", padding: "22px 24px" } },
-    h("div", { style: { display: "flex", alignItems: "center", gap: "10px", fontWeight: "600" } },
-      h("span", { style: { width: "12px", height: "12px", borderRadius: "50%", background: "#FFB300", boxShadow: "0 0 0 4px rgba(255,179,0,.2)", animation: "ledpulse 1.8s ease-in-out infinite" } }),
-      diar ? "Diarizing… " : "Transcribing… ", h("span", { id: "live-progress-text", class: "mono secondary", style: { fontWeight: "500" } }, pctText)),
+    h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" } },
+      h("div", { style: { display: "flex", alignItems: "center", gap: "10px", fontWeight: "600" } },
+        h("span", { style: { width: "12px", height: "12px", borderRadius: "50%", background: "#FFB300", boxShadow: "0 0 0 4px rgba(255,179,0,.2)", animation: "ledpulse 1.8s ease-in-out infinite" } }),
+        diar ? "Diarizing… " : "Transcribing… ", h("span", { id: "live-progress-text", class: "mono secondary", style: { fontWeight: "500" } }, pctText)),
+      h("button", { class: "btn danger", style: { padding: "7px 14px" }, onclick: () => cancelJob(proc.id) }, "Cancel")),
     bar,
     h("div", { class: "mono muted", style: { fontSize: "12px", marginTop: "10px" } },
-      proc.route === "service" ? "On the processing service · recording is unaffected" : "faster-whisper on the Pi · a new recording cancels this"));
+      proc.route === "service" ? "On the processing service · progress not reported · recording is unaffected" : "faster-whisper on the Pi · a new recording cancels this"));
+}
+
+function cancelJob(jobId) {
+  if (!jobId) return;
+  api.cancelJob(jobId).then(async () => {
+    toast("Job cancelled · session returned to pending");
+    await refreshSessions();
+    await refreshJobs();
+    if (S.route.name === "detail") await loadDetail(S.route.id);
+    renderView();
+  }).catch(fail);
 }
 
 function transcribeCTA(d) {
-  const canDiarize = S.service && S.service.reachable && S.service.capabilities && S.service.capabilities.diarize;
   return h("div", { style: { marginTop: "22px", border: "1px dashed var(--color-border)", borderRadius: "var(--radius-lg)", background: "var(--color-surface)", padding: "24px", textAlign: "center" } },
     h("div", { class: "serif", style: { fontWeight: "700", fontSize: "20px", marginBottom: "16px" } }, "Audio only"),
-    h("button", { class: "btn primary", onclick: () => { if (canDiarize) { S.modal = { type: "transcribe", id: d.id }; renderModal(); } else api.enqueue(d.id, "transcribe").then(() => toast("Transcribing")).catch(fail); } }, "Transcribe"),
+    h("button", { class: "btn primary", onclick: () => openTranscribeModal(d.id) }, "Transcribe"),
     h("div", { class: "muted", style: { fontSize: "13px", marginTop: "14px", maxWidth: "470px", margin: "14px auto 0", lineHeight: "1.5" } },
       "Transcription runs on this device unless a processing service is configured."));
+}
+
+function openTranscribeModal(id) {
+  const canDiarize = S.service && S.service.reachable && S.service.capabilities && S.service.capabilities.diarize;
+  if (!canDiarize && id !== "__all__") {
+    api.enqueue(id, "transcribe").then(() => toast("Transcribing")).catch(fail);
+    return;
+  }
+  if (!canDiarize && id === "__all__") {
+    api.bulk("transcribe", "pending").then((r) => toast(`Queued ${r.jobs.length} transcription job(s)`)).catch(fail);
+    return;
+  }
+  S.modal = { type: "transcribe", id, diarize: false };
+  renderModal();
 }
 
 function transcriptSection(d) {
@@ -591,19 +651,41 @@ function renderModal() {
           h("button", { class: "btn primary", style: { background: "var(--color-error)", borderColor: "var(--color-error)" },
             onclick: () => { const id = S.modal.id; S.modal = null; api.del(id).then(() => { toast("Session deleted"); location.hash = "#/"; }).catch(fail); } }, "Delete")))));
   } else if (S.modal.type === "transcribe") {
-    const id = S.modal.id;
-    root.appendChild(h("div", { class: "modal-bg", onclick: () => (S.modal = null, renderModal()) },
+    const m = S.modal;
+    const id = m.id;
+    const canDiarize = S.service && S.service.reachable && S.service.capabilities && S.service.capabilities.diarize;
+    const close = () => (S.modal = null, renderModal());
+    const submit = () => {
+      const n = parseInt((document.getElementById("speaker-count-hint") || {}).value, 10);
+      const opts = Number.isFinite(n) && n > 0 ? { num_speakers: n } : {};
+      const diarize = !!m.diarize;
+      close();
+      const p = id === "__all__"
+        ? api.bulk(diarize ? "diarize" : "transcribe", diarize ? "undiarized" : "pending")
+        : api.enqueue(id, diarize ? "diarize" : "transcribe", diarize ? opts : {});
+      p.then((r) => {
+        const count = r && r.jobs ? ` (${r.jobs.length})` : "";
+        toast(diarize ? `Diarizing queued${count}` : `Transcription queued${count}`);
+      }).catch(fail);
+    };
+    root.appendChild(h("div", { class: "modal-bg", onclick: close },
       h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Transcribe options", onclick: (e) => e.stopPropagation() },
-        h("h3", { class: "serif", style: { fontWeight: "700", fontSize: "22px", margin: "0 0 6px" } }, "Transcribe this session"),
-        h("p", { class: "secondary", style: { fontSize: "14px", lineHeight: "1.6", margin: "0 0 20px" } }, "Diarization needs the processing service; plain transcription does not."),
-        h("button", { class: "btn", style: { width: "100%", justifyContent: "flex-start", padding: "16px 18px", marginBottom: "12px" },
-          onclick: () => { S.modal = null; renderModal(); api.enqueue(id, "transcribe").then(() => toast("Transcribing")).catch(fail); } }, "Transcribe — text with timestamps"),
-        h("label", { class: "mono muted", style: { display: "block", fontSize: "12px", margin: "0 0 8px" } }, "Speaker count hint (optional)"),
-        h("input", { id: "speaker-count-hint", class: "field", type: "number", min: "1", step: "1", placeholder: "infer automatically", style: { width: "100%", marginBottom: "12px" }, "aria-label": "Optional speaker count hint" }),
-        h("button", { class: "btn", style: { width: "100%", justifyContent: "flex-start", padding: "16px 18px" },
-          onclick: () => { const n = parseInt(document.getElementById("speaker-count-hint").value, 10); const opts = Number.isFinite(n) && n > 0 ? { num_speakers: n } : {}; S.modal = null; renderModal(); api.enqueue(id, "diarize", opts).then(() => toast("Diarizing on the service")).catch(fail); } }, "Diarize — label speakers"),
-        h("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: "20px" } },
-          h("button", { class: "btn", onclick: () => (S.modal = null, renderModal()) }, "Cancel")))));
+        h("h3", { class: "serif", style: { fontWeight: "700", fontSize: "22px", margin: "0 0 6px" } }, id === "__all__" ? "Transcribe all" : "Transcribe this session"),
+        h("p", { class: "secondary", style: { fontSize: "14px", lineHeight: "1.6", margin: "0 0 20px" } },
+          id === "__all__" ? "Runs for every pending session. Turn on speaker labels to diarize every not-yet-diarized session instead." : "Text with timestamps. Turn on speaker labels below if you need them."),
+        h("div", { class: "card", style: { display: "flex", gap: "14px", alignItems: "flex-start", background: "var(--color-bg)", padding: "16px 18px", marginBottom: "12px" } },
+          h("span", { style: { fontSize: "20px" } }, "▤"),
+          h("span", {}, h("strong", {}, "Transcribe"), h("br"), h("span", { class: "secondary", style: { fontSize: "13px" } }, "Full text with timestamps, saved as transcript.md."))),
+        canDiarize ? h("label", { style: { display: "flex", gap: "12px", alignItems: "flex-start", cursor: "pointer" } },
+          h("input", { type: "checkbox", checked: !!m.diarize, onchange: (e) => { m.diarize = e.target.checked; renderModal(); } }),
+          h("span", {}, h("strong", {}, "Also identify speakers"), h("br"), h("span", { class: "secondary", style: { fontSize: "13px" } }, "Diarizes on the processing service. You name the detected speakers afterward."))) : null,
+        canDiarize && m.diarize ? h("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginTop: "12px" } },
+          h("label", { class: "secondary", style: { fontSize: "13px", fontWeight: "600" } }, "Speakers (optional)"),
+          h("input", { id: "speaker-count-hint", class: "field", inputmode: "numeric", placeholder: "auto", style: { width: "76px", padding: "8px 11px" }, "aria-label": "Optional speaker count hint" }),
+          h("span", { class: "muted", style: { fontSize: "12px", lineHeight: "1.4", flex: "1" } }, "Hint passed to the service.")) : null,
+        h("div", { style: { display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "22px" } },
+          h("button", { class: "btn", onclick: close }, "Cancel"),
+          h("button", { class: "btn primary", onclick: submit }, m.diarize ? "Transcribe + diarize" : "Transcribe")))));
   } else if (S.modal.type === "upload") {
     root.appendChild(uploadModal(S.modal));
   }
@@ -724,11 +806,14 @@ function connectEvents() {
   });
   es.addEventListener("sessions-changed", async () => {
     await refreshSessions();
+    await refreshJobs();
     if (S.route.name === "detail") await loadDetail(S.route.id);
     renderView();
   });
   es.addEventListener("jobs-changed", async () => {
-    if (S.route.name === "detail") { await loadDetail(S.route.id); renderView(); }
+    await refreshJobs();
+    if (S.route.name === "detail") await loadDetail(S.route.id);
+    renderView();
   });
   es.onerror = () => {/* EventSource auto-reconnects; first event after is a fresh snapshot */};
 }
@@ -739,6 +824,7 @@ async function boot() {
   try { S.status = await api.status(); } catch (_) {}
   try { S.service = await api.service(); } catch (_) {}
   await refreshSessions();
+  await refreshJobs();
   await onRoute();
   connectEvents();
 }

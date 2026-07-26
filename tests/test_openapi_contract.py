@@ -186,7 +186,7 @@ def test_stop_recording_discarded_result_validates():
     ({"occurred_at": "2026-07-20T14:00"}, "SessionPatch"),
     ({"occurred_at": None}, "SessionPatch"),
     ({"kind": "transcribe"}, "JobCreate"),
-    ({"kind": "diarize", "target": "pending"}, "BulkJobCreate"),
+    ({"kind": "diarize", "target": "undiarized"}, "BulkJobCreate"),
     ({"url": "http://homelab.local:9000"}, "ServiceUpdate"),
 ])
 def test_request_bodies_validate(body, schema):

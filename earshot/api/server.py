@@ -302,10 +302,16 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
     def bulk_enqueue():
         body = request_json("BulkJobCreate")
         kind = body["kind"]
+        target = body["target"]
+        if kind == "transcribe" and target != "pending":
+            raise ApiError(400, "invalid_body", "transcribe bulk target must be pending")
+        if kind == "diarize" and target != "undiarized":
+            raise ApiError(400, "invalid_body", "diarize bulk target must be undiarized")
         if kind == "diarize" and not diarize_available():
             raise ApiError(409, "diarize_unavailable",
                            "no processing service provides diarization")
-        jobs = [enqueue(sid, kind) for sid in store.pending_session_ids()]
+        session_ids = store.undiarized_session_ids() if target == "undiarized" else store.pending_session_ids()
+        jobs = [enqueue(sid, kind) for sid in session_ids]
         return respond({"jobs": jobs}, "JobList", status=202)
 
     @app.get("/v1/jobs/<int:job_id>")
@@ -319,12 +325,13 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
     def cancel_job(job_id: int):
         row = store.db.get_job(job_id)
         if row is None:
-            raise ApiError(404, "not_found", f"no job {job_id}")
+            # Idempotent: already gone is not an error (rpi/specs/api.md).
+            return ("", 204)
         state = row["state"]
         if state == "queued":
             store.db.cancel_queued_job(job_id, datetime.now().isoformat())
         elif state == "running" and worker is not None:
-            # A running local job is terminated; a finished-underneath race is a no-op.
+            # A running local job is terminated; a service request is abandoned.
             worker.cancel_running(job_id)
         # done/failed/cancelled: already terminal — cancellation is idempotent.
         return ("", 204)
