@@ -23,13 +23,14 @@ import queue
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from earshot.api.errors import ApiError
 from earshot.config import Config
 from earshot.hal.bundle import Hal
 from earshot.hal.led_states import DISCARDED, SHUTTING_DOWN, led_state_for
-from earshot.recording.encode import EncodeError
+from earshot.recording.encode import EncodeError, probe_duration, transcode_to_m4a
 from earshot.recording.recorder import Recorder
 from earshot.statemachine.transitions import (
     Action,
@@ -134,14 +135,25 @@ class Controller:
     def stop_recording(self) -> dict:
         return self._submit("stop")
 
-    def _submit(self, kind: str) -> dict:
-        cmd = _Command(kind)
+    def _submit(self, kind: str, payload: Any = None) -> dict:
+        cmd = _Command(kind, payload=payload)
         self._commands.put(cmd)
         if not cmd.done.wait(_COMMAND_TIMEOUT_SECONDS):
             raise ApiError(503, "busy", "the device did not respond in time")
         if cmd.error is not None:
             raise cmd.error
         return cmd.result
+
+    def ingest_upload(self, src: Path, name: str | None, occurred_at: str | None) -> dict:
+        """Create a session from an uploaded audio file (rpi/requirements/web-ui/
+        upload-audio.md). Serialised on the control loop so it is refused while a
+        recording is active and surfaces the ``finalizing`` state during the encode.
+
+        Returns the finished ``SessionDetail``; raises ApiError (409/400) otherwise.
+        """
+        return self._submit(
+            "ingest", payload={"src": src, "name": name, "occurred_at": occurred_at}
+        )
 
     @property
     def active_session_id(self) -> int | None:
@@ -301,6 +313,8 @@ class Controller:
         if cmd.kind in _COMMAND_TRIGGERS:
             self._fire(_COMMAND_TRIGGERS[cmd.kind], command=cmd)
             self._reject_pending("device busy")
+        elif cmd.kind == "ingest":
+            self._ingest(cmd)
         elif cmd.kind == "proc_begin":
             cmd.resolve(self._grant_processing(cmd.payload))
         elif cmd.kind == "proc_end":
@@ -321,6 +335,55 @@ class Controller:
         self._processing = None
         if self._state is State.PROCESSING:
             self._advance(Trigger.JOB_FINISHED)  # PROCESSING -> IDLE
+
+    def _ingest(self, cmd: _Command) -> None:
+        """Ingest an uploaded file into a new session (upload-audio.md).
+
+        Only from idle: a recording is sacred and the encode holds Pi CPU, so an
+        upload is refused while recording/finalizing and while a local job runs
+        (processing). Self-contained — it resolves/fails the command itself so no
+        exception escapes onto the control-loop thread. The encode blocks the loop
+        exactly as a recording finalize does; the ``finalizing`` LED/state is shown
+        while it runs.
+        """
+        if self._state in (State.RECORDING, State.FINALIZING):
+            cmd.fail(ApiError(409, "recording", "upload is disabled while recording"))
+            return
+        if self._state not in (State.IDLE, State.DISK_FULL):
+            cmd.fail(ApiError(409, "busy", "device is busy"))  # processing / booting
+            return
+        if self.store.disk_info().blocked:
+            cmd.fail(ApiError(409, "disk_full", "disk threshold reached; upload blocked"))
+            return
+
+        payload = cmd.payload
+        src = Path(payload["src"])
+        self._enter(State.FINALIZING)  # amber; observable by a concurrent GET /v1/status
+        session_id = self.store.allocate_session()
+        try:
+            out = self.store.m4a_path(session_id)
+            transcode_to_m4a(
+                src, out, bitrate_kbps=self.config.recording.encode_bitrate_kbps
+            )
+            duration = probe_duration(out)
+            size = out.stat().st_size
+            self.store.finalize_session(session_id, duration, size)
+            if payload["name"] is not None or payload["occurred_at"] is not None:
+                self.store.set_session_fields(
+                    session_id, name=payload["name"], occurred_at=payload["occurred_at"]
+                )
+            row = self.store.db.get_session(session_id)
+            log.info("uploaded session ingested: %s", render_session_id(session_id))
+            cmd.resolve(self.store.session_detail_api(row, active_id=None))
+        except EncodeError as exc:
+            log.warning(
+                "upload ingest failed for %s: %s", render_session_id(session_id), exc
+            )
+            self.store.delete_session(session_id)  # drop the empty allocated session
+            cmd.fail(ApiError(400, "invalid_audio", "uploaded audio could not be decoded"))
+        finally:
+            src.unlink(missing_ok=True)
+            self._advance(Trigger.FINALIZED)  # FINALIZING -> IDLE
 
     def _take_command(self) -> _Command | None:
         try:

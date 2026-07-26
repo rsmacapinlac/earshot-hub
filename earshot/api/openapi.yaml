@@ -56,6 +56,43 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SessionList" }
+    post:
+      operationId: createSession
+      summary: >-
+        Create a session from an uploaded audio file — the second way a session is
+        born, alongside recording. The file is transcoded to the canonical
+        session.m4a on ingest; the session lands pending (never auto-processed).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [audio]
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: Any format ffmpeg decodes. Transcoded to session.m4a.
+                name:
+                  type: string
+                  description: Optional label; omitted/empty means unnamed (falls back to the id).
+                occurred_at:
+                  type: string
+                  description: Optional user-set date or date-time (as for PATCH /sessions/{id}).
+      responses:
+        "201":
+          description: The finished session (encoded, pending).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: A recording is active, the device is busy, or the disk threshold blocks it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
 
   /sessions/{id}:
     parameters:
@@ -346,6 +383,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     BadRequest:
       description: Malformed body or unknown fields.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PayloadTooLarge:
+      description: Uploaded file exceeds storage.max_upload_mb.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

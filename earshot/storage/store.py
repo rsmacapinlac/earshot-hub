@@ -96,6 +96,24 @@ class Store:
         self.session_dir(session_id).mkdir(parents=True, exist_ok=True)
         return session_id
 
+    def new_upload_temp(self) -> Path:
+        """Allocate a fresh temp path for an incoming upload, under the data dir.
+
+        Uploads are streamed to disk here before being transcoded to the canonical
+        ``session.m4a`` (rpi/requirements/web-ui/upload-audio.md). The data dir is the
+        one writable location under the systemd sandbox (``ReadWritePaths``), so the
+        system default ``TMPDIR`` cannot be assumed. The caller owns cleanup.
+        """
+        import tempfile
+
+        updir = self.config.data_dir / "uploads"
+        updir.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix="upload-", suffix=".tmp", dir=updir)
+        import os
+
+        os.close(fd)
+        return Path(name)
+
     def finalize_session(self, session_id: int, duration: float, size: int) -> None:
         self.db.update_session(session_id, duration=duration, size=size)
         self.write_status_json(session_id)

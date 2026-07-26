@@ -30,6 +30,10 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 def create_app(controller, store, config, worker=None, service=None) -> Flask:
     app = Flask(__name__, static_folder=None)
     app.url_map.strict_slashes = False
+    # Bound an uploaded body so Werkzeug 413s before buffering an oversize file
+    # (rpi/requirements/web-ui/upload-audio.md). Covers the whole multipart body;
+    # the tiny name/occurred_at fields make it marginally stricter than the raw file.
+    app.config["MAX_CONTENT_LENGTH"] = config.storage.max_upload_mb * 1024 * 1024
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -88,6 +92,14 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
     def _handle_api_error(err: ApiError):
         return jsonify(err.to_dict()), err.status
 
+    @app.errorhandler(413)
+    def _handle_too_large(_err):
+        # MAX_CONTENT_LENGTH exceeded on an upload (POST /v1/sessions).
+        return jsonify(ApiError(
+            413, "too_large",
+            f"upload exceeds the {config.storage.max_upload_mb} MB limit",
+        ).to_dict()), 413
+
     # ------------------------------------------------------------------ #
     # Device status
     # ------------------------------------------------------------------ #
@@ -131,6 +143,31 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
     # ------------------------------------------------------------------ #
     # Sessions
     # ------------------------------------------------------------------ #
+
+    @app.post("/v1/sessions")
+    def create_session():
+        # Second creation path: ingest an uploaded audio file (upload-audio.md).
+        # multipart/form-data: audio (required) + optional name / occurred_at.
+        upload = request.files.get("audio")
+        if upload is None or not upload.filename:
+            raise ApiError(400, "invalid_body", "multipart field 'audio' is required")
+
+        name = (request.form.get("name") or "").strip() or None
+        occurred_raw = request.form.get("occurred_at")
+        occurred_at = None
+        if occurred_raw not in (None, ""):
+            try:
+                occurred_at = store.normalize_occurred_at(occurred_raw)
+            except ValueError as exc:
+                raise ApiError(400, "invalid_body", str(exc))
+
+        tmp = store.new_upload_temp()
+        try:
+            upload.save(str(tmp))
+            detail = controller.ingest_upload(tmp, name, occurred_at)
+        finally:
+            tmp.unlink(missing_ok=True)  # backstop; ingest also unlinks on its side
+        return respond(detail, "SessionDetail", status=201)
 
     @app.get("/v1/sessions")
     def list_sessions():

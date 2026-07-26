@@ -42,6 +42,7 @@ def test_base_is_valid():
     (_with("storage", data_dir=""), "storage.data_dir"),
     (_with("storage", disk_threshold_percent=0), "storage.disk_threshold_percent"),
     (_with("storage", disk_threshold_percent=101), "storage.disk_threshold_percent"),
+    (_with("storage", max_upload_mb=0), "storage.max_upload_mb"),
     (_with("transcription", model=""), "transcription.model"),
     (_with("transcription", threads=0), "transcription.threads"),
     (_with("processing", service_url="ftp://x"), "processing.service_url"),

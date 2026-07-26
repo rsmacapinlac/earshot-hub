@@ -55,6 +55,39 @@ def encode_session(
         raise EncodeError(f"ffmpeg failed ({proc.returncode}): {proc.stderr.strip()}")
 
 
+def transcode_to_m4a(
+    src: Path,
+    out_path: Path,
+    *,
+    bitrate_kbps: int,
+    ffmpeg: str = "ffmpeg",
+) -> None:
+    """Transcode an arbitrary audio/video *src* to the canonical ``session.m4a``.
+
+    A single ffmpeg pass to AAC-LC, 16 kHz mono — the same output a recording ends
+    with (rpi/specs/recording.md), used to ingest an uploaded file
+    (rpi/requirements/web-ui/upload-audio.md). Unlike :func:`encode_session`, the
+    source may be any sample rate/channel count, so ``-ar``/``-ac`` are forced.
+
+    Raises :class:`EncodeError` on failure (an undecodable/unsupported upload),
+    leaving no partial output.
+    """
+    src = Path(src)
+    out_path = Path(out_path)
+    cmd = [
+        ffmpeg, "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(src),
+        "-vn",  # drop any video stream (e.g. an .mp4/.mov container)
+        "-c:a", "aac", "-b:a", f"{bitrate_kbps}k", "-ac", "1", "-ar", "16000",
+        "-movflags", "+faststart",
+        str(out_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if proc.returncode != 0:
+        out_path.unlink(missing_ok=True)  # no partial artifact
+        raise EncodeError(f"ffmpeg failed ({proc.returncode}): {proc.stderr.strip()}")
+
+
 def cut_sample(
     src: Path, *, start: float, duration: float,
     bitrate_kbps: int = 32, ffmpeg: str = "ffmpeg",

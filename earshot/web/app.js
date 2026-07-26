@@ -49,6 +49,16 @@ const api = {
   service: () => getJSON("/v1/service"),
   startRec: () => send("POST", "/v1/recording"),
   stopRec: () => send("DELETE", "/v1/recording"),
+  upload: (file, meta) => {
+    const fd = new FormData();
+    fd.append("audio", file);
+    if (meta && meta.name) fd.append("name", meta.name);
+    if (meta && meta.occurred_at) fd.append("occurred_at", meta.occurred_at);
+    return fetch("/v1/sessions", { method: "POST", body: fd }).then(async (r) => {
+      if (!r.ok) throw await apiError(r);
+      return r.json();
+    });
+  },
   enqueue: (id, kind, opts) => send("POST", "/v1/sessions/" + id + "/jobs", Object.assign({ kind }, opts || {})),
   bulk: (kind) => send("POST", "/v1/jobs", { kind, target: "pending" }),
   patchSession: (id, fields) => send("PATCH", "/v1/sessions/" + id, fields),
@@ -264,11 +274,19 @@ function recordHero() {
     h("div", { class: "disk-bar" }, h("div", { id: "live-disk", style: { width: pct + "%", background: diskColor } })),
     h("div", { class: "mono muted", style: { fontSize: "12px", marginTop: "7px" } }, diskFull ? "blocked at threshold" : "recording allowed"));
 
+  const idle = !recording && !finalizing && !diskFull;
+  const uploadBtn = h("button", {
+    class: "btn primary ghost", style: { marginTop: "16px" },
+    title: idle ? "Create a session from an existing audio file" : "Available when the device is idle",
+    disabled: !idle, onclick: openUpload,
+  }, "⬆ Upload a file");
+
   return h("section", { class: "card hero" }, wrap,
     h("div", { style: { flex: "1", minWidth: "220px" } },
       h("div", { class: "mono muted", style: { fontSize: "12px", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: "6px" } }, eyebrow),
       h("div", { id: recording ? "live-clock" : null, class: "serif", style: { fontWeight: "700", fontSize: "30px", lineHeight: "1.1" } }, headline),
-      h("div", { class: "secondary", style: { fontSize: "15px", marginTop: "8px", maxWidth: "420px", lineHeight: "1.5" } }, sub)),
+      h("div", { class: "secondary", style: { fontSize: "15px", marginTop: "8px", maxWidth: "420px", lineHeight: "1.5" } }, sub),
+      uploadBtn),
     disk);
 }
 
@@ -288,7 +306,8 @@ function viewList() {
       h("div", { style: { fontSize: "40px", marginBottom: "8px", opacity: ".5" } }, "🎙️"),
       h("div", { class: "serif", style: { fontWeight: "700", fontSize: "22px" } }, "No recordings yet"),
       h("div", { class: "secondary", style: { maxWidth: "380px", margin: "10px auto 0", lineHeight: "1.6" } },
-        "Press the button on the device — or the record control above — to capture your first session.")));
+        "Press the button on the device — or the record control above — to capture your first session. You can also upload an existing audio file."),
+      h("button", { class: "btn primary ghost", style: { marginTop: "18px" }, onclick: openUpload }, "⬆ Upload a file")));
     return wrap;
   }
 
@@ -585,7 +604,89 @@ function renderModal() {
           onclick: () => { const n = parseInt(document.getElementById("speaker-count-hint").value, 10); const opts = Number.isFinite(n) && n > 0 ? { num_speakers: n } : {}; S.modal = null; renderModal(); api.enqueue(id, "diarize", opts).then(() => toast("Diarizing on the service")).catch(fail); } }, "Diarize — label speakers"),
         h("div", { style: { display: "flex", justifyContent: "flex-end", marginTop: "20px" } },
           h("button", { class: "btn", onclick: () => (S.modal = null, renderModal()) }, "Cancel")))));
+  } else if (S.modal.type === "upload") {
+    root.appendChild(uploadModal(S.modal));
   }
+}
+
+// The upload dialog (rpi/requirements/web-ui/upload-audio.md). State lives on the
+// modal object `m` so it survives re-renders; text fields are read at submit time
+// (and captured before a file-change re-render) so typing never loses focus.
+const MAX_UPLOAD_MB = 500;
+function uploadModal(m) {
+  const close = () => { if (m.uploading) return; S.modal = null; renderModal(); };
+  const capture = () => {
+    const n = document.getElementById("up-name"); if (n) m.name = n.value;
+    const d = document.getElementById("up-date"); if (d) m.date = d.value;
+    const t = document.getElementById("up-time"); if (t) m.time = t.value;
+  };
+  const onFile = (e) => {
+    capture();
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const mb = f.size / 1048576;
+    m.file = f;
+    if (mb > MAX_UPLOAD_MB) { m.error = `Too large — ${mb.toFixed(0)} MB is over the ${MAX_UPLOAD_MB} MB limit.`; }
+    else { m.error = null; if (!m.name) m.name = f.name.replace(/\.[^.]+$/, ""); }
+    renderModal();
+  };
+  const submit = () => {
+    capture();
+    if (!m.file || m.error || m.uploading) return;
+    m.uploading = true; renderModal();
+    api.upload(m.file, { name: (m.name || "").trim(), occurred_at: composeOccurred(m.date, m.time) })
+      .then((d) => { S.modal = null; renderModal(); toast("Uploaded · encoded to session.m4a · pending"); location.hash = "#/s/" + d.id; })
+      .catch((e) => { m.uploading = false; m.error = e.message || "Upload failed"; renderModal(); });
+  };
+
+  const body = [];
+  if (m.uploading) {
+    body.push(
+      h("div", { class: "card", style: { padding: "22px 24px", background: "var(--color-bg)" } },
+        h("div", { style: { display: "flex", alignItems: "center", gap: "10px", fontWeight: "600" } },
+          h("span", { class: "spinner", "aria-hidden": "true" }), "Encoding session.m4a…"),
+        h("div", { class: "indet", style: { marginTop: "14px" } }, h("div")),
+        h("div", { class: "mono muted", style: { fontSize: "12px", marginTop: "12px" } },
+          "Transcoding to AAC-LC · 16 kHz mono · the same encode a recording ends with.")));
+  } else {
+    body.push(h("input", { id: "up-file", type: "file", accept: "audio/*,video/*", style: { display: "none" }, onchange: onFile }));
+    if (!m.file) {
+      body.push(h("label", { for: "up-file", class: "empty", style: { display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", padding: "30px 24px", cursor: "pointer", background: "var(--color-bg)" } },
+        h("div", { style: { fontSize: "26px" } }, "⬆"),
+        h("div", { style: { fontWeight: "700", fontSize: "15px" } }, "Choose an audio file"),
+        h("div", { class: "muted", style: { fontSize: "13px" } }, `Any format ffmpeg can decode · up to ${MAX_UPLOAD_MB} MB`)));
+    } else {
+      body.push(h("div", { class: "card", style: { display: "flex", alignItems: "center", gap: "14px", padding: "14px 16px", background: "var(--color-bg)" } },
+        h("div", { style: { minWidth: "0", flex: "1" } },
+          h("div", { style: { fontWeight: "600", fontSize: "14px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.file.name),
+          h("div", { class: "mono muted", style: { fontSize: "12px", marginTop: "2px" } }, fmtSize(m.file.size))),
+        h("label", { for: "up-file", style: { fontSize: "13px", fontWeight: "600", color: "var(--color-primary)", cursor: "pointer", flexShrink: "0" } }, "Change")));
+    }
+    if (m.error) {
+      body.push(h("div", { style: { color: "var(--color-error)", fontSize: "13px", lineHeight: "1.5", marginTop: "12px" } }, m.error));
+    }
+    body.push(h("div", { style: { marginTop: "20px", paddingTop: "18px", borderTop: "1px solid var(--color-border)", display: "flex", flexDirection: "column", gap: "14px" } },
+      h("div", {},
+        h("label", { class: "secondary", style: { display: "block", fontSize: "13px", fontWeight: "600", marginBottom: "7px" } }, "Name (optional)"),
+        h("input", { id: "up-name", class: "field", value: m.name, placeholder: "Falls back to the session ID", "aria-label": "Session name" })),
+      h("div", {},
+        h("label", { class: "secondary", style: { display: "block", fontSize: "13px", fontWeight: "600", marginBottom: "7px" } }, "Date & time (optional)"),
+        h("div", { style: { display: "flex", gap: "10px", flexWrap: "wrap" } },
+          h("input", { id: "up-date", class: "field", type: "date", value: m.date, style: { width: "auto" }, "aria-label": "Date it happened" }),
+          h("input", { id: "up-time", class: "field", type: "time", value: m.time, style: { width: "auto" }, "aria-label": "Time it happened" })),
+        h("div", { class: "muted", style: { fontSize: "12px", marginTop: "8px", lineHeight: "1.5" } },
+          "When the conversation actually happened. Worth setting — the device only knows when the file was uploaded."))));
+    body.push(h("div", { style: { display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "22px" } },
+      h("button", { class: "btn", onclick: close }, "Cancel"),
+      h("button", { class: "btn primary", disabled: !m.file || !!m.error, onclick: submit }, "Upload")));
+  }
+
+  return h("div", { class: "modal-bg", onclick: close },
+    h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Upload an audio file", onclick: (e) => e.stopPropagation() },
+      h("h3", { class: "serif", style: { fontWeight: "700", fontSize: "22px", margin: "0 0 6px" } }, "Upload an audio file"),
+      h("p", { class: "secondary", style: { fontSize: "14px", lineHeight: "1.6", margin: "0 0 20px" } },
+        "Create a session from a recording made elsewhere — a phone memo, another recorder, an exported call. It's encoded to session.m4a on the device, then behaves exactly like a recorded session."),
+      ...body));
 }
 
 // ---- record toggle --------------------------------------------------------
@@ -594,6 +695,18 @@ async function toggleRecord() {
     if (S.status && S.status.state === "recording") await api.stopRec();
     else await api.startRec();
   } catch (e) { fail(e); }
+}
+
+// Open the upload modal, unless the device is not idle. The encode holds Pi CPU,
+// so an upload is refused while recording/finalizing and while a local job runs
+// (rpi/requirements/web-ui/upload-audio.md); the server enforces this too.
+function openUpload() {
+  const st = S.status || { state: "idle" };
+  if (st.state === "recording" || st.state === "finalizing") { toast("Upload is disabled while recording"); return; }
+  if (st.state === "processing") { toast("Busy — try the upload once the device is idle"); return; }
+  if (st.state === "disk_full" || (st.disk && st.disk.blocked)) { toast("Disk threshold reached — free space first"); return; }
+  S.modal = { type: "upload", file: null, name: "", date: "", time: "", uploading: false, error: null };
+  renderModal();
 }
 
 // ---- live updates (SSE) ---------------------------------------------------
