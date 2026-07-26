@@ -234,8 +234,10 @@ class JobWorker:
             log.error("job %d needs a processing service", job_id)
             return
         if not client.reachable():
-            self.db.requeue_job(job_id)
-            log.warning("processing service unreachable for job %d; requeued, no attempt bump", job_id)
+            # The job is still queued because we have not claimed it. Leave it as-is
+            # rather than writing it back to queued: a user may have cancelled it while
+            # the reachability check was in flight, and cancel must not be resurrected.
+            log.warning("processing service unreachable for job %d; left queued, no attempt bump", job_id)
             self._stop.wait(1.0)
             return
 
@@ -254,8 +256,13 @@ class JobWorker:
             self._service_interrupted(job_id)
             return
         except (ServiceJobFailed, ServiceUnreachable) as exc:
-            self._handle_failure(job, str(exc), _now())
-            self._after_service()
+            reason = self._release()
+            self._controller.set_processing(None)
+            if reason == "cancel":
+                self.db.set_job_cancelled(job_id, _now())
+                log.info("service job %d cancelled", job_id)
+            else:
+                self._handle_failure(job, str(exc), _now())
             return
 
         if kind == "diarize":

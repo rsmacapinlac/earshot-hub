@@ -39,6 +39,8 @@ class FakeState:
             Segment(0.0, 5.0, "morning all", "SPEAKER_01"),
             Segment(5.0, 9.0, "analytics look fine", "SPEAKER_00"),
         ])
+        self.reachable_gate: threading.Event | None = kw.get("reachable_gate")
+        self.reachable_entered: threading.Event | None = kw.get("reachable_entered")
         self.poll_gate: threading.Event | None = kw.get("poll_gate")
         self.fail = kw.get("fail", False)
         self.submitted: list = []
@@ -57,6 +59,10 @@ class FakeServiceClient:
         return {"paths": {"/asr": {"post": {"parameters": params}}}}
 
     def reachable(self):
+        if self.s.reachable_entered is not None:
+            self.s.reachable_entered.set()
+        if self.s.reachable_gate is not None:
+            self.s.reachable_gate.wait(timeout=2.0)
         return self.s.reachable
 
     def capabilities(self):
@@ -202,6 +208,25 @@ def test_diarize_via_service_writes_speakers(make_app):
     speakers = client.get(f"/v1/sessions/{_sid(sid)}/speakers").get_json()["speakers"]
     assert [s["label"] for s in speakers] == ["Speaker 1", "Speaker 2"]
     assert all(s["segments"] == 1 for s in speakers)
+
+
+def test_cancel_during_service_reachability_check_is_not_resurrected(make_app):
+    entered = threading.Event()
+    release = threading.Event()
+    state = FakeState(reachable=False, reachable_entered=entered, reachable_gate=release)
+    app = make_app(state=state)
+    client = app.flask_app.test_client()
+    sid = _seed(app.store)
+
+    job_id = app.db.insert_job(sid, "diarize", datetime.now().isoformat())
+    app.worker.wake()
+    assert entered.wait(timeout=3.0)
+    assert client.delete(f"/v1/jobs/{job_id}").status_code == 204
+    release.set()
+    assert _poll(lambda: client.get(f"/v1/jobs/{job_id}").get_json()["state"] == "cancelled"), \
+        client.get(f"/v1/jobs/{job_id}").get_json()
+    time.sleep(0.2)
+    assert client.get(f"/v1/jobs/{job_id}").get_json()["state"] == "cancelled"
 
 
 def test_bulk_diarize_targets_all_undiarized_sessions(make_app):
