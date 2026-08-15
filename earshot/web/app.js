@@ -145,6 +145,7 @@ const S = {
   route: { name: "list" },
   modal: null, // {type:'delete'|'transcribe'|'upload', id, diarize?}
   lastStructFp: null,
+  refreshDeferred: false, // a change arrived while typing; refresh once the edit ends
   sampleIdx: {},        // "id\0label" → which voice sample is selected
   activeTurnStart: null, // start of the transcript turn the selected sample was cut from
   scrollToTurn: false,   // one-shot: scroll to that turn on the next render only
@@ -383,7 +384,11 @@ function viewDetail() {
   const occ = splitOccurred(d.occurred_at);
   const nameInput = h("input", { class: "name-input", "data-focus": "name", value: d.name || "", placeholder: d.id,
     "aria-label": "Session name", title: "Name this session — the ID stays its identity",
-    oninput: (e) => onRename(e.target.value) });
+    // Hold what was typed locally, verbatim — a rebuild mid-edit would otherwise
+    // render the last *saved* name and silently discard everything typed since
+    // (issue #1). Trimming happens on the way to the API, not here, so a rebuild
+    // cannot eat a trailing space mid-word either.
+    oninput: (e) => { if (S.detail && S.detail.id === d.id) S.detail.name = e.target.value || null; onRename(e.target.value); } });
   const dateInput = h("input", { class: "field", "data-focus": "occurred-date", type: "date", value: occ.date,
     style: { width: "auto", padding: "6px 9px", fontSize: "13px" },
     "aria-label": "Session date", title: "When this conversation actually happened — optional",
@@ -560,7 +565,8 @@ function diarizedBody(d) {
     const card = h("div", { class: "spk-card" + (active ? " active" : ""), style: { borderColor: active ? color : null, boxShadow: active ? `0 0 0 3px color-mix(in srgb, ${color} 12%, transparent)` : null },
       onclick: () => cur && activateSample(cur.start, false) },
       h("div", { style: { display: "flex", alignItems: "center", gap: "9px" } },
-        h("span", { style: { width: "22px", height: "22px", borderRadius: "50%", background: color, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: "700", fontSize: "11px", flexShrink: "0" } }, (sp.name || "").trim() ? sp.name.trim()[0].toUpperCase() : String(i + 1)),
+        h("span", { "data-spk-initial": sp.label, "data-spk-fallback": String(i + 1),
+          style: { width: "22px", height: "22px", borderRadius: "50%", background: color, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: "700", fontSize: "11px", flexShrink: "0" } }, (sp.name || "").trim() ? sp.name.trim()[0].toUpperCase() : String(i + 1)),
         h("span", { class: "mono muted", style: { fontSize: "12px", flex: "1" } }, `${sp.label} · ${sp.segments} turn${sp.segments === 1 ? "" : "s"}`),
         h("span", { class: "mono muted", style: { fontSize: "11px" } }, many ? `Clip ${idx + 1} of ${samples.length}` : (cur ? "Voice sample" : "No sample"))));
 
@@ -599,11 +605,26 @@ function diarizedBody(d) {
       active ? { "data-turn": "active", style: { borderLeftColor: color, background: `color-mix(in srgb, ${color} 10%, transparent)` } } : {}),
       h("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px" } },
         h("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: color } }),
-        h("span", { style: { fontWeight: "700", fontSize: "14px", color: color } }, who),
+        h("span", { "data-spk-name": seg.speaker, style: { fontWeight: "700", fontSize: "14px", color: color } }, who),
         h("span", { class: "mono muted", style: { fontSize: "12px" } }, fmtClock(seg.start))),
       h("div", { style: { fontSize: "16px", lineHeight: "1.7", paddingLeft: "16px" } }, seg.text)));
   }
   return h("div", { class: "diar-grid", style: { display: "grid", gridTemplateColumns: "320px 1fr", gap: "24px", alignItems: "start" } }, side, body);
+}
+
+// Swap one label's rendered name in place — the transcript turns that carry it and
+// the sidebar avatar's initial. Mirrors updateLiveCounters(): a targeted text update
+// where a whole-view rebuild would otherwise flicker.
+function substituteSpeakerName(label, name) {
+  const shown = (name && name.trim()) ? name.trim() : label;
+  document.querySelectorAll(`[data-spk-name="${CSS.escape(label)}"]`)
+    .forEach((el) => (el.textContent = shown));
+  const avatar = document.querySelector(`[data-spk-initial="${CSS.escape(label)}"]`);
+  if (avatar) {
+    avatar.textContent = (name && name.trim())
+      ? name.trim()[0].toUpperCase()
+      : (avatar.dataset.spkFallback || "?");
+  }
 }
 
 const speakerSaveTimers = new Map();
@@ -612,9 +633,11 @@ function updateSpeakerNameLive(id, label, value) {
   const apply = (rows) => (rows || []).map((sp) => sp.label === label ? Object.assign({}, sp, { name }) : sp);
   S.speakers = apply(S.speakers);
   if (S.detail && S.detail.id === id) S.detail.speakers = apply(S.detail.speakers);
-  // Match the prototype: typed names immediately replace `Speaker N` throughout
-  // the visible transcript, while persistence is debounced to the device API.
-  renderView();
+  // Typed names immediately replace `Speaker N` throughout the visible transcript,
+  // while persistence is debounced to the device API. Update those nodes in place
+  // rather than re-rendering: a full rebuild per keystroke dropped text selection,
+  // native undo, and IME composition, and restarted the turn-highlight animation.
+  substituteSpeakerName(label, name);
 
   const key = id + "\0" + label;
   clearTimeout(speakerSaveTimers.get(key));
@@ -869,6 +892,36 @@ function openUpload() {
   renderModal();
 }
 
+// ---- editing guard --------------------------------------------------------
+// The device polls for changes once a second and broadcasts them, so a client
+// receives the echo of its own save and cannot tell it from someone else's
+// change. Rebuilding the view on that echo destroys the field being typed in,
+// so defer the refresh until the edit is finished (issue #1).
+function isEditing() {
+  const a = document.activeElement;
+  if (!a || (a.tagName !== "INPUT" && a.tagName !== "TEXTAREA")) return false;
+  const view = document.getElementById("view");
+  return !!(view && view.contains(a));
+}
+function deferWhileEditing() {
+  if (!isEditing()) return false;
+  S.refreshDeferred = true;
+  return true;
+}
+async function refreshAfterChange() {
+  await refreshSessions();
+  await refreshJobs();
+  if (S.route.name === "detail") await loadDetail(S.route.id);
+  renderView();
+}
+// focusout fires before the next element gains focus, so settle first — tabbing
+// between two fields should not count as finishing the edit.
+function watchEditEnd() {
+  document.addEventListener("focusout", () => setTimeout(() => {
+    if (S.refreshDeferred && !isEditing()) { S.refreshDeferred = false; refreshAfterChange(); }
+  }, 0));
+}
+
 // ---- live updates (SSE) ---------------------------------------------------
 function connectEvents() {
   const es = new EventSource("/v1/events");
@@ -879,16 +932,21 @@ function connectEvents() {
     // appearing/disappearing). A plain elapsed/disk/progress tick just updates
     // its own nodes in place, so the view doesn't flicker while recording.
     const fp = structFingerprint(S.status);
-    if (fp !== S.lastStructFp) { S.lastStructFp = fp; renderView(); }
+    // renderHeader() above already reflects the new state, so deferring the body
+    // rebuild while typing costs nothing visible. lastStructFp is deliberately
+    // left stale so the change is still pending once the edit ends.
+    if (fp !== S.lastStructFp) { if (!deferWhileEditing()) { S.lastStructFp = fp; renderView(); } }
     else updateLiveCounters();
   });
   es.addEventListener("sessions-changed", async () => {
+    if (deferWhileEditing()) return;
     await refreshSessions();
     await refreshJobs();
     if (S.route.name === "detail") await loadDetail(S.route.id);
     renderView();
   });
   es.addEventListener("jobs-changed", async () => {
+    if (deferWhileEditing()) return;
     await refreshJobs();
     if (S.route.name === "detail") await loadDetail(S.route.id);
     renderView();
@@ -904,6 +962,7 @@ async function boot() {
   await refreshSessions();
   await refreshJobs();
   await onRoute();
+  watchEditEnd();
   connectEvents();
 }
 boot();
