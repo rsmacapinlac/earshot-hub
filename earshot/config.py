@@ -54,6 +54,7 @@ class RecordingConfig:
 class StorageConfig:
     data_dir: str = DEFAULT_DATA_DIR
     disk_threshold_percent: int = 90
+    max_upload_mb: int = 500
 
 
 @dataclass
@@ -219,6 +220,8 @@ class Config:
             raise ConfigError("storage.data_dir must not be empty")
         if not (0 < self.storage.disk_threshold_percent <= 100):
             raise ConfigError("storage.disk_threshold_percent must be in (0, 100]")
+        if self.storage.max_upload_mb <= 0:
+            raise ConfigError("storage.max_upload_mb must be > 0")
         # [transcription]
         t = self.transcription
         if not t.model:

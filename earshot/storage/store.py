@@ -96,6 +96,24 @@ class Store:
         self.session_dir(session_id).mkdir(parents=True, exist_ok=True)
         return session_id
 
+    def new_upload_temp(self) -> Path:
+        """Allocate a fresh temp path for an incoming upload, under the data dir.
+
+        Uploads are streamed to disk here before being transcoded to the canonical
+        ``session.m4a`` (rpi/requirements/web-ui/upload-audio.md). The data dir is the
+        one writable location under the systemd sandbox (``ReadWritePaths``), so the
+        system default ``TMPDIR`` cannot be assumed. The caller owns cleanup.
+        """
+        import tempfile
+
+        updir = self.config.data_dir / "uploads"
+        updir.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix="upload-", suffix=".tmp", dir=updir)
+        import os
+
+        os.close(fd)
+        return Path(name)
+
     def finalize_session(self, session_id: int, duration: float, size: int) -> None:
         self.db.update_session(session_id, duration=duration, size=size)
         self.write_status_json(session_id)
@@ -231,14 +249,35 @@ class Store:
         return path.read_text(encoding="utf-8") if path.exists() else None
 
     def pending_session_ids(self) -> list[int]:
-        """Sessions eligible for a bulk transcribe: finalized, no transcript, no
-        active job, and no unresolved failure — oldest id first."""
+        """Sessions eligible for bulk plain transcription.
+
+        ``target: pending`` means finalized audio with no transcript, no queued/running
+        job, and no unresolved failed job — oldest id first (rpi/specs/api.md)."""
         out: list[int] = []
         for row in self.db.list_sessions():
             sid = int(row["id"])
             if row["missing"] or not self.m4a_path(sid).exists():
                 continue
             if self.has_transcript(sid) or self.db.active_job_for_session(sid) is not None:
+                continue
+            latest = self.db.latest_job_for_session(sid)
+            if latest is not None and latest["state"] == "failed":
+                continue
+            out.append(sid)
+        return sorted(out)
+
+    def undiarized_session_ids(self) -> list[int]:
+        """Sessions eligible for bulk diarization.
+
+        ``target: undiarized`` means every finalized session whose current transcript is
+        not diarized, including audio-only and plain-transcribed sessions. Active jobs
+        are skipped; an unresolved failed job is not retried by a bulk action."""
+        out: list[int] = []
+        for row in self.db.list_sessions():
+            sid = int(row["id"])
+            if row["missing"] or not self.m4a_path(sid).exists():
+                continue
+            if self.is_diarized(sid) or self.db.active_job_for_session(sid) is not None:
                 continue
             latest = self.db.latest_job_for_session(sid)
             if latest is not None and latest["state"] == "failed":
@@ -268,12 +307,16 @@ class Store:
         return self.diarized_raw_path(session_id).exists()
 
     def derive_state(self, row: sqlite3.Row, active_id: int | None) -> str:
+        """Derive the durable session state.
+
+        v1.3.3 keeps queued/running processing in the session's ``job`` overlay, not in
+        ``state``. A pending session with a queued job is still ``pending``; a
+        transcribed session being re-diarized is still ``transcribed`` until the job
+        succeeds. The UI renders job status from ``SessionDetail.job``.
+        """
         if active_id is not None and row["id"] == active_id:
             return "recording"
         session_id = int(row["id"])
-        active = self.db.active_job_for_session(session_id)
-        if active is not None:
-            return "diarizing" if active["kind"] == "diarize" else "transcribing"
         if self.has_transcript(session_id):
             return "diarized" if self.is_diarized(session_id) else "transcribed"
         latest = self.db.latest_job_for_session(session_id)

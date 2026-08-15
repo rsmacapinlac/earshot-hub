@@ -132,6 +132,10 @@
     padding:12px 20px; border-radius:var(--radius-pill); box-shadow:var(--shadow-lg); animation:fadeup .25s ease; }
   .spinner { width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;
     border-radius:50%; animation:spin .8s linear infinite; display:inline-block; }
+  @keyframes indet { 0%{background-position:-40% 0} 100%{background-position:140% 0} }
+  .indet { height:8px; border-radius:99px; background:var(--color-surface-hover); overflow:hidden; border:1px solid var(--color-border); }
+  .indet > div { height:100%; background:linear-gradient(90deg,transparent,var(--color-warning),transparent);
+    background-size:40% 100%; background-repeat:no-repeat; animation:indet 1.15s ease-in-out infinite; }
   footer.app { border-top:1px solid var(--color-border); padding:22px 24px; }
   footer.app .row { display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px;
     font-size:13px; color:var(--color-text-secondary); font-family:var(--font-mono); }
@@ -168,7 +172,7 @@
   <footer class="app">
     <div class="row wrap">
       <span>earshot hub · Raspberry Pi 4B + ReSpeaker 2-Mic HAT</span>
-      <span>Local-first capture · v1.2</span>
+      <span>Local-first capture · v1.3.3</span>
     </div>
   </footer>
 

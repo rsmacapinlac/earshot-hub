@@ -22,11 +22,13 @@ def app_factory(tmp_path, monkeypatch):
         realtime: bool = True,
         disk_threshold: int = 90,
         service_url: str = "",
+        max_upload_mb: int = 500,
     ) -> Application:
         cfg = Config()
         cfg.storage.data_dir = str(tmp_path)
         cfg.recording.min_duration_seconds = min_duration
         cfg.storage.disk_threshold_percent = disk_threshold
+        cfg.storage.max_upload_mb = max_upload_mb
         cfg.processing.service_url = service_url
         cfg.recording.chunk_duration_seconds = 900
         app = build_application(config=cfg, hal_override="stub", realtime=realtime)

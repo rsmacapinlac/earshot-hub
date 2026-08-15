@@ -92,6 +92,10 @@
           <div style="font-family:var(--font-mono);font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--color-muted);margin-bottom:6px;">{{ recEyebrow }}</div>
           <div style="font-family:var(--font-serif);font-weight:700;font-size:30px;line-height:1.1;">{{ recHeadline }}</div>
           <div style="color:var(--color-text-secondary);font-size:15px;margin-top:8px;max-width:420px;line-height:1.5;">{{ recSub }}</div>
+          <button onClick="{{ openUpload }}" title="{{ uploadHeroTitle }}" style="{{ uploadHeroBtnStyle }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M12 3v13"></path><path d="M7 8l5-5 5 5"></path></svg>
+            Upload a file
+          </button>
         </div>
         <div style="min-width:190px;flex-shrink:0;">
           <div style="display:flex;justify-content:space-between;font-size:12px;font-family:var(--font-mono);color:var(--color-text-secondary);margin-bottom:7px;"><span>Disk</span><span>{{ diskLabel }}</span></div>
@@ -107,10 +111,10 @@
           <h2 style="font-family:var(--font-serif);font-weight:700;font-size:28px;margin:0;">Sessions</h2>
           <div style="font-size:13px;color:var(--color-muted);margin-top:4px;font-family:var(--font-mono);">{{ sessionsCountLabel }}</div>
         </div>
-        <sc-if value="{{ hasPending }}" hint-placeholder-val="{{ false }}">
-          <button onClick="{{ transcribeAll }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:var(--radius-md);border:1px solid var(--color-primary);background:var(--color-surface);color:var(--color-primary);cursor:pointer;display:inline-flex;align-items:center;gap:8px;">
+        <sc-if value="{{ showTranscribeAll }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ openTranscribeAll }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:var(--radius-md);border:1px solid var(--color-primary);background:var(--color-surface);color:var(--color-primary);cursor:pointer;display:inline-flex;align-items:center;gap:8px;">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4z"></path><path d="M4 14h10v6H4z"></path><path d="M18 14l4 3-4 3z"></path></svg>
-            Transcribe all pending
+            Transcribe all
           </button>
         </sc-if>
       </div>
@@ -119,7 +123,11 @@
         <div style="text-align:center;padding:72px 24px;border:1px dashed var(--color-border);border-radius:var(--radius-xl);background:var(--color-surface);">
           <div style="font-size:40px;margin-bottom:8px;opacity:.5;">🎙️</div>
           <div style="font-family:var(--font-serif);font-weight:700;font-size:22px;">No recordings yet</div>
-          <div style="color:var(--color-text-secondary);max-width:380px;margin:10px auto 0;line-height:1.6;">Press the button on the device — or the record control above — to capture your first session. Recordings stay on the Pi until you remove them.</div>
+          <div style="color:var(--color-text-secondary);max-width:380px;margin:10px auto 0;line-height:1.6;">Press the button on the device — or the record control above — to capture your first session. You can also upload an existing audio file. Everything stays on the Pi until you remove it.</div>
+          <button onClick="{{ openUpload }}" title="{{ uploadHeroTitle }}" style="{{ uploadEmptyBtnStyle }}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M12 3v13"></path><path d="M7 8l5-5 5 5"></path></svg>
+            Upload a file
+          </button>
         </div>
       </sc-if>
 
@@ -217,6 +225,17 @@
         </div>
       </sc-if>
 
+      <sc-if value="{{ sel.isQueued }}" hint-placeholder-val="{{ false }}">
+        <div style="margin-top:22px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);padding:22px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+          <span style="width:12px;height:12px;border-radius:50%;background:#FFB300;box-shadow:0 0 0 4px rgba(255,179,0,.2);flex-shrink:0;"></span>
+          <div style="flex:1;min-width:200px;">
+            <div style="font-weight:600;">Queued for {{ sel.jobKindLabel }}</div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-top:4px;">{{ sel.queueLabel }} · starts when the device is free</div>
+          </div>
+          <button onClick="{{ cancelJob }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 16px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-error);cursor:pointer;flex-shrink:0;">Cancel job</button>
+        </div>
+      </sc-if>
+
       <sc-if value="{{ sel.showTranscribeCTA }}" hint-placeholder-val="{{ false }}">
         <div style="margin-top:22px;border:1px dashed var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);padding:24px;text-align:center;">
           <div style="font-family:var(--font-serif);font-weight:700;font-size:20px;margin-bottom:16px;">Audio only</div>
@@ -230,9 +249,12 @@
 
       <sc-if value="{{ sel.isTranscribing }}" hint-placeholder-val="{{ false }}">
         <div style="margin-top:22px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);padding:22px 24px;">
-          <div style="display:flex;align-items:center;gap:10px;font-weight:600;">
-            <span style="width:12px;height:12px;border-radius:50%;background:#FFB300;box-shadow:0 0 0 4px rgba(255,179,0,.2);animation:ledpulse 1.8s ease-in-out infinite;"></span>
-            {{ transcribeRunLabel }} <span style="font-family:var(--font-mono);color:var(--color-text-secondary);font-weight:500;">{{ transcribePctLabel }}</span>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <div style="display:flex;align-items:center;gap:10px;font-weight:600;">
+              <span style="width:12px;height:12px;border-radius:50%;background:#FFB300;box-shadow:0 0 0 4px rgba(255,179,0,.2);animation:ledpulse 1.8s ease-in-out infinite;"></span>
+              {{ transcribeRunLabel }} <span style="font-family:var(--font-mono);color:var(--color-text-secondary);font-weight:500;">{{ transcribePctLabel }}</span>
+            </div>
+            <button onClick="{{ cancelJob }}" style="font-family:var(--font-sans);font-size:13px;font-weight:600;padding:7px 14px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-error);cursor:pointer;flex-shrink:0;">Cancel</button>
           </div>
           <div style="height:8px;border-radius:99px;background:var(--color-surface-hover);overflow:hidden;margin-top:14px;border:1px solid var(--color-border);">
             <div style="{{ transcribeBarStyle }}"></div>
@@ -243,9 +265,12 @@
 
       <sc-if value="{{ sel.isDiarizing }}" hint-placeholder-val="{{ false }}">
         <div style="margin-top:22px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-surface);padding:22px 24px;">
-          <div style="display:flex;align-items:center;gap:10px;font-weight:600;">
-            <span style="width:12px;height:12px;border-radius:50%;background:var(--color-secondary);box-shadow:0 0 0 4px rgba(224,169,109,.25);animation:ledpulse 1.4s ease-in-out infinite;"></span>
-            Diarizing… <span style="font-family:var(--font-mono);color:var(--color-text-secondary);font-weight:500;">{{ diarizePctLabel }}</span>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <div style="display:flex;align-items:center;gap:10px;font-weight:600;">
+              <span style="width:12px;height:12px;border-radius:50%;background:var(--color-secondary);box-shadow:0 0 0 4px rgba(224,169,109,.25);animation:ledpulse 1.4s ease-in-out infinite;"></span>
+              Diarizing… <span style="font-family:var(--font-mono);color:var(--color-text-secondary);font-weight:500;">{{ diarizePctLabel }}</span>
+            </div>
+            <button onClick="{{ cancelJob }}" style="font-family:var(--font-sans);font-size:13px;font-weight:600;padding:7px 14px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-error);cursor:pointer;flex-shrink:0;">Cancel</button>
           </div>
           <div style="height:8px;border-radius:99px;background:var(--color-surface-hover);overflow:hidden;margin-top:14px;border:1px solid var(--color-border);">
             <div style="{{ diarizeBarStyle }}"></div>
@@ -384,7 +409,7 @@
   <footer style="border-top:1px solid var(--color-border);padding:22px 24px;">
     <div style="max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--color-text-secondary);font-family:var(--font-mono);">
       <span>earshot · Raspberry Pi 4B + ReSpeaker 2-Mic HAT</span>
-      <span>Local-first capture · v1.1</span>
+      <span>Local-first capture · v1.3.3</span>
     </div>
   </footer>
 
@@ -405,38 +430,120 @@
   <sc-if value="{{ transcribeModalOpen }}" hint-placeholder-val="{{ false }}">
     <div onClick="{{ closeTranscribeModal }}" style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;display:flex;align-items:center;justify-content:center;padding:24px;">
       <div onClick="{{ stop }}" style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-xl);padding:28px;max-width:460px;width:100%;box-shadow:var(--shadow-lg);">
-        <h3 style="font-family:var(--font-serif);font-weight:700;font-size:22px;margin:0 0 6px;">Transcribe this session</h3>
-        <p style="color:var(--color-text-secondary);font-size:14px;line-height:1.6;margin:0 0 20px;">Choose what you need. Diarization needs the processing service; plain transcription does not.</p>
+        <h3 style="font-family:var(--font-serif);font-weight:700;font-size:22px;margin:0 0 6px;">{{ transcribeModalTitle }}</h3>
+        <p style="color:var(--color-text-secondary);font-size:14px;line-height:1.6;margin:0 0 20px;">{{ transcribeModalSub }}</p>
 
-        <button onClick="{{ chooseLocal }}" style="width:100%;text-align:left;display:flex;gap:14px;align-items:flex-start;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:16px 18px;cursor:pointer;color:var(--color-text);" style-hover="border-color:var(--color-primary);background:var(--color-surface-hover);">
+        <div style="display:flex;gap:14px;align-items:flex-start;background:var(--color-bg);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:16px 18px;">
           <span style="width:36px;height:36px;border-radius:50%;background:rgba(var(--color-primary-rgb),.12);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4z"></path><path d="M4 14h10v6H4z"></path><path d="M18 14l4 3-4 3z"></path></svg>
           </span>
           <span style="min-width:0;">
             <span style="display:block;font-family:var(--font-sans);font-weight:700;font-size:15px;">Transcribe</span>
-            <span style="display:block;font-size:13px;color:var(--color-text-secondary);line-height:1.5;margin-top:3px;">Text with timestamps. No speaker labels.</span>
+            <span style="display:block;font-size:13px;color:var(--color-text-secondary);line-height:1.5;margin-top:3px;">Full text with timestamps, saved as transcript.md.</span>
           </span>
-        </button>
-
-        <button onClick="{{ chooseDiarize }}" style="{{ diarizeChoiceStyle }}" title="{{ diarizeChoiceTitle }}">
-          <span style="width:36px;height:36px;border-radius:50%;background:rgba(155,89,182,.14);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9b59b6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-          </span>
-          <span style="min-width:0;">
-            <span style="display:block;font-family:var(--font-sans);font-weight:700;font-size:15px;">Diarize</span>
-            <span style="display:block;font-size:13px;color:var(--color-text-secondary);line-height:1.5;margin-top:3px;">{{ diarizeChoiceSub }}</span>
-          </span>
-        </button>
-
-        <div style="display:flex;align-items:center;gap:10px;margin-top:16px;padding-top:16px;border-top:1px solid var(--color-border);">
-          <label style="font-size:13px;font-weight:600;color:var(--color-text-secondary);">Speakers <span style="font-weight:400;color:var(--color-muted);">(optional)</span></label>
-          <input value="{{ numSpeakers }}" onInput="{{ onNumSpeakers }}" inputMode="numeric" placeholder="auto" style="width:76px;font-family:var(--font-mono);font-size:14px;padding:8px 11px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
-          <span style="font-size:12px;color:var(--color-muted);line-height:1.4;flex:1;">Diarization hint passed to the service. Leave blank to let it detect the count.</span>
         </div>
 
-        <div style="display:flex;justify-content:flex-end;margin-top:20px;">
+        <sc-if value="{{ canDiarize }}" hint-placeholder-val="{{ true }}">
+          <label onClick="{{ toggleDiarizeCheck }}" style="display:flex;gap:12px;align-items:flex-start;margin-top:12px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:16px 18px;cursor:pointer;">
+            <span style="{{ diarizeCheckBoxStyle }}">
+              <sc-if value="{{ diarizeCheckMark }}" hint-placeholder-val="{{ false }}">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>
+              </sc-if>
+            </span>
+            <span style="min-width:0;">
+              <span style="display:block;font-family:var(--font-sans);font-weight:700;font-size:15px;">Also identify speakers</span>
+              <span style="display:block;font-size:13px;color:var(--color-text-secondary);line-height:1.5;margin-top:3px;">Diarizes on the processing service — labels each voice as Speaker N. You name them afterward.</span>
+            </span>
+          </label>
+
+          <sc-if value="{{ diarizeChecked }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
+              <label style="font-size:13px;font-weight:600;color:var(--color-text-secondary);">Speakers <span style="font-weight:400;color:var(--color-muted);">(optional)</span></label>
+              <input value="{{ numSpeakers }}" onInput="{{ onNumSpeakers }}" inputMode="numeric" placeholder="auto" style="width:76px;font-family:var(--font-mono);font-size:14px;padding:8px 11px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
+              <span style="font-size:12px;color:var(--color-muted);line-height:1.4;flex:1;">Hint passed to the service. Leave blank to let it detect the count.</span>
+            </div>
+          </sc-if>
+        </sc-if>
+
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:22px;">
           <button onClick="{{ closeTranscribeModal }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:10px 18px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;">Cancel</button>
+          <button onClick="{{ submitTranscribe }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:10px 20px;border-radius:var(--radius-md);border:none;background:var(--color-primary);color:#fff;cursor:pointer;">{{ submitLabel }}</button>
         </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Upload an audio file (v1.3) — POST /v1/sessions -->
+  <sc-if value="{{ uploadOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeUpload }}" style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;display:flex;align-items:center;justify-content:center;padding:24px;">
+      <div onClick="{{ stop }}" style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-xl);padding:28px;max-width:480px;width:100%;box-shadow:var(--shadow-lg);">
+        <h3 style="font-family:var(--font-serif);font-weight:700;font-size:22px;margin:0 0 6px;">Upload an audio file</h3>
+        <p style="color:var(--color-text-secondary);font-size:14px;line-height:1.6;margin:0 0 20px;">Create a session from a recording made elsewhere — a phone memo, another recorder, an exported call. It's encoded to <code style="font-family:var(--font-mono);font-size:.85em;">session.m4a</code> on the device, then behaves exactly like a recorded session.</p>
+
+        <sc-if value="{{ uploading }}" hint-placeholder-val="{{ false }}">
+          <div style="border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-bg);padding:22px 24px;">
+            <div style="display:flex;align-items:center;gap:10px;font-weight:600;">
+              <span style="width:12px;height:12px;border-radius:50%;background:#FFB300;box-shadow:0 0 0 4px rgba(255,179,0,.2);animation:ledpulse 1.8s ease-in-out infinite;"></span>
+              Encoding session.m4a…
+            </div>
+            <div style="height:8px;border-radius:99px;background:var(--color-surface-hover);overflow:hidden;margin-top:14px;border:1px solid var(--color-border);">
+              <div style="height:100%;width:100%;background:linear-gradient(90deg,transparent,#FFB300,transparent);background-size:40% 100%;background-repeat:no-repeat;animation:indet 1.15s ease-in-out infinite;"></div>
+            </div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-top:12px;">Transcoding to AAC-LC · 16 kHz mono · the same encode a recording ends with.</div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ uploadIdle }}" hint-placeholder-val="{{ true }}">
+          <input id="up-file" type="file" accept="audio/*,video/*" onChange="{{ onUploadFile }}" style="display:none;" />
+
+          <sc-if value="{{ uploadNoFile }}" hint-placeholder-val="{{ true }}">
+            <label for="up-file" style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;border:1.5px dashed var(--color-border);border-radius:var(--radius-lg);padding:30px 24px;cursor:pointer;background:var(--color-bg);">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M12 3v13"></path><path d="M7 8l5-5 5 5"></path></svg>
+              <span style="font-family:var(--font-sans);font-weight:700;font-size:15px;color:var(--color-text);">Choose an audio file</span>
+              <span style="font-size:13px;color:var(--color-muted);">Any format ffmpeg can decode · up to 500 MB</span>
+            </label>
+          </sc-if>
+
+          <sc-if value="{{ uploadHasFile }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:14px;border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:14px 16px;background:var(--color-bg);">
+              <span style="width:38px;height:38px;border-radius:var(--radius-md);background:rgba(var(--color-primary-rgb),.12);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+              </span>
+              <div style="min-width:0;flex:1;">
+                <div style="font-family:var(--font-sans);font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ uploadFileName }}</div>
+                <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-top:2px;">{{ uploadFileSize }}</div>
+              </div>
+              <label for="up-file" style="font-family:var(--font-sans);font-size:13px;font-weight:600;color:var(--color-primary);cursor:pointer;flex-shrink:0;">Change</label>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ uploadHasError }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;gap:10px;align-items:flex-start;margin-top:12px;color:var(--color-error);font-size:13px;line-height:1.5;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px;"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>
+              <span>{{ uploadError }}</span>
+            </div>
+          </sc-if>
+
+          <div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--color-border);display:flex;flex-direction:column;gap:14px;">
+            <div>
+              <label style="display:block;font-size:13px;font-weight:600;color:var(--color-text-secondary);margin-bottom:7px;">Name <span style="font-weight:400;color:var(--color-muted);">(optional)</span></label>
+              <input value="{{ uploadName }}" onInput="{{ onUploadName }}" placeholder="Falls back to the session ID" style="width:100%;font-family:var(--font-sans);font-size:14px;padding:10px 12px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
+            </div>
+            <div>
+              <label style="display:block;font-size:13px;font-weight:600;color:var(--color-text-secondary);margin-bottom:7px;">Date &amp; time <span style="font-weight:400;color:var(--color-muted);">(optional)</span></label>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <input type="date" value="{{ uploadDate }}" onInput="{{ onUploadDate }}" style="font-family:var(--font-mono);font-size:13px;padding:9px 11px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
+                <input type="time" value="{{ uploadTime }}" onInput="{{ onUploadTime }}" style="font-family:var(--font-mono);font-size:13px;padding:9px 11px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
+              </div>
+              <div style="font-size:12px;color:var(--color-muted);margin-top:8px;line-height:1.5;">When the conversation actually happened. Worth setting — the device only knows when the file was uploaded.</div>
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:22px;">
+            <button onClick="{{ closeUpload }}" style="font-family:var(--font-sans);font-size:14px;font-weight:600;padding:10px 18px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);cursor:pointer;">Cancel</button>
+            <button onClick="{{ doUpload }}" style="{{ uploadSubmitStyle }}">Upload session</button>
+          </div>
+        </sc-if>
       </div>
     </div>
   </sc-if>
@@ -463,6 +570,7 @@ class Component extends DCLogic {
     diarizingId: null,
     diarizeProgress: 0,
     numSpeakers: '',
+    diarizeChecked: false,                      // v1.3.2 — Diarize checkbox in the transcribe modal
     serviceUrl: 'http://homelab.local:9000',   // '' = processing unavailable, no actions shown
     serviceDraft: '',
     serviceStatus: 'ok',                       // 'unset' | 'unreachable' | 'ok'
@@ -473,6 +581,9 @@ class Component extends DCLogic {
     toast: null,
     diskPercent: 46,
     clipPlaying: null,       // "sessionId::Speaker 1" while a preview clip plays
+    // Upload an audio file (v1.3): the second creation path (POST /v1/sessions).
+    uploadOpen: false, uploadFile: null, uploadName: '', uploadDate: '', uploadTime: '',
+    uploadError: null, uploading: false,
     sessions: [
       // diarized: transcript.md IS the speaker-labelled version (TD-5). The service returns Speaker N,
       // consistent across the whole recording; the user names them per-session (FR-27).
@@ -503,6 +614,10 @@ class Component extends DCLogic {
           { t: '00:33', text: "None. I'll ping you if the drive situation changes." }
         ], diarized: [], speakerMap: {} },
       { id: 'rec-000040', name: '', recordedAt: '2026-07-15T17:30:12', status: 'pending', dur: 742, size: 3.0, transcript: [], diarized: [], speakerMap: {} },
+      // v1.3.3 — a pending session that ALSO owns a queued job. It must read as "Queued", visibly
+      // distinct from an untouched "Audio only" pending. Its job is the session's own, not device state.
+      { id: 'rec-000037', name: 'Client kickoff call', recordedAt: '2026-07-15T09:02:10', occurredDate: '2026-07-15', occurredTime: '09:00', status: 'pending', dur: 1920, size: 7.7, transcript: [], diarized: [], speakerMap: {},
+        job: { state: 'queued', route: 'local', kind: 'transcribe', queuePos: 1 } },
       { id: 'rec-000039', name: '', recordedAt: '2026-07-14T20:11:33', status: 'failed', dur: 3061, size: 12.2, transcript: [], diarized: [], speakerMap: {},
         failedCount: 3, failedError: 'model load failed: unable to allocate memory (base.en, INT8)' },
       { id: 'rec-000038', name: 'Shelf bracket reminder', recordedAt: '2026-07-12T11:00:45', occurredDate: '2026-07-12', occurredTime: '', status: 'transcribed', dur: 372, size: 1.5,
@@ -550,12 +665,14 @@ class Component extends DCLogic {
     return 'rec-'+String((nums.length?Math.max(...nums):0)+1).padStart(6,'0'); }
   statusMeta(st){ const m={
     recording:{label:'Recording',color:'#ef4444'},
+    queued:{label:'Queued',color:'#FFB300'},
+    processing:{label:'Processing',color:'#FFB300'},
     pending:{label:'Audio only',color:'#c78a3d'},
     transcribed:{label:'Transcribed',color:'var(--color-primary)'},
     diarized:{label:'Transcribed with Speakers',color:'#9b59b6'},
     failed:{label:'Failed',color:'var(--color-error)'} }; return m[st]||m.pending; }
   badge(st,color){ return `display:inline-flex;align-items:center;font-family:var(--font-sans);font-size:12px;font-weight:600;padding:4px 12px;border-radius:var(--radius-pill);color:#fff;background:${color};white-space:nowrap;`; }
-  soft(color){ const map={'#ef4444':'rgba(239,68,68,.15)','#c78a3d':'rgba(199,138,61,.18)','#9b59b6':'rgba(155,89,182,.15)','var(--color-primary)':'rgba(var(--color-primary-rgb),.15)','var(--color-error)':'rgba(211,47,47,.15)'}; return map[color]||'rgba(0,0,0,.06)'; }
+  soft(color){ const map={'#ef4444':'rgba(239,68,68,.15)','#FFB300':'rgba(255,179,0,.18)','#c78a3d':'rgba(199,138,61,.18)','#9b59b6':'rgba(155,89,182,.15)','var(--color-primary)':'rgba(var(--color-primary-rgb),.15)','var(--color-error)':'rgba(211,47,47,.15)'}; return map[color]||'rgba(0,0,0,.06)'; }
 
   deviceInfo(){ const d=this.state.device; const m={
     booting:{label:'Booting',color:'255,255,255',pulse:true},
@@ -599,14 +716,37 @@ class Component extends DCLogic {
   _canDiarize(){ return this._svcOn() && this.state.serviceCaps.diarize; }
 
   transcribeSel=()=>this._transcribe(this.state.selectedId);
-  openTranscribeModal=()=>{ if(!this._canDiarize()){ this._transcribe(this.state.selectedId); return; } this.setState({transcribeModalId:this.state.selectedId}); };
-  closeTranscribeModal=()=>this.setState({transcribeModalId:null});
-  chooseLocal=()=>{ const id=this.state.transcribeModalId; this.setState({transcribeModalId:null}); this._transcribe(id); };
+  // v1.3.2 — ONE Transcribe action; diarization is a checkbox inside it, shown only when the service
+  // is connected and reports the capability. With no capability there is nothing to choose → transcribe directly.
+  openTranscribeModal=()=>{ if(!this._canDiarize()){ this._transcribe(this.state.selectedId); return; }
+    this.setState({transcribeModalId:this.state.selectedId, diarizeChecked:false, numSpeakers:''}); };
+  closeTranscribeModal=()=>this.setState({transcribeModalId:null, diarizeChecked:false});
+  toggleDiarizeCheck=()=>this.setState(st=>({diarizeChecked:!st.diarizeChecked}));
   onNumSpeakers=(e)=>{ const v=e.target.value.replace(/[^0-9]/g,'').slice(0,2); this.setState({numSpeakers:v}); };
-  chooseDiarize=()=>{ if(!this._canDiarize()){ this.toast('Diarization unavailable on this service'); this.setState({transcribeModalId:null}); this.go('settings'); return; }
-    const hint=parseInt(this.state.numSpeakers,10); this.setState({transcribeModalId:null});
-    this._diarize(this.state.selectedId, isNaN(hint)?null:hint); };
+  submitTranscribe=()=>{ const id=this.state.transcribeModalId; const diar=this.state.diarizeChecked;
+    const hint=parseInt(this.state.numSpeakers,10); this.setState({transcribeModalId:null, diarizeChecked:false});
+    if(id==='__all__'){ if(diar) this.diarizeAll(); else this.transcribeAll(); return; }
+    if(diar) this._diarize(id, isNaN(hint)?null:hint); else this._transcribe(id); };
+  // v1.3.2 — one batch action. Diarize off → transcribe all pending; on → diarize all undiarized.
+  openTranscribeAll=()=>{ if(!this._canDiarize()){ this.transcribeAll(); return; }
+    this.setState({transcribeModalId:'__all__', diarizeChecked:false, numSpeakers:''}); };
   transcribeAll=()=>{ const p=this.state.sessions.filter(s=>s.status==='pending'); if(p.length) this._transcribe(p[p.length-1].id); };
+  // v1.3.2 — "Diarize all" (Diarize on) targets every undiarized session: audio-only AND already-transcribed.
+  diarizeAll=()=>{ if(!this._canDiarize()){ this.toast('No processing service configured'); this.go('settings'); return; }
+    const u=this.state.sessions.filter(s=>s.status==='pending'||s.status==='transcribed'); if(u.length) this._diarize(u[u.length-1].id, null); };
+  // v1.3.1 — Cancel a queued OR running job. Terminal 'cancelled'; the session returns to pending and is
+  // NOT requeued. Idempotent. Distinct from preemption (a preempted LOCAL job returns to the front of the queue).
+  cancelJob=(id)=>{ id=id||this.state.selectedId; if(!id)return;
+    if(this.state.transcribingId===id){ clearInterval(this._proc); this._proc=null;
+      this.setState(st=>({ transcribingId:null, transcribeProgress:0, jobRoute:null,
+        device: st.device==='processing'?'idle':st.device,
+        sessions:st.sessions.map(s=>s.id===id?{...s,status:'pending',job:null}:s) })); }
+    else if(this.state.diarizingId===id){ clearInterval(this._proc); this._proc=null;
+      this.setState(st=>({ diarizingId:null, diarizeProgress:0, jobRoute:null,
+        device: st.device==='processing'?'idle':st.device,
+        sessions:st.sessions.map(s=>s.id===id?{...s,status:'pending',job:null}:s) })); }
+    else { this.setState(st=>({ sessions:st.sessions.map(s=>s.id===id?{...s,status:'pending',job:null}:s) })); }
+    this.toast('Job cancelled · session returned to pending'); };
   retry=()=>{ this.setState(st=>({ sessions:st.sessions.map(s=>s.id===st.selectedId?{...s,status:'pending'}:s) })); this._transcribe(this.state.selectedId); };
   revertLocal=()=>{ const id=this.state.selectedId;
     this.setState(st=>({ sessions:st.sessions.map(s=>s.id===id?{...s,status:'transcribed',diarized:[],speakerMap:{}}:s) }));
@@ -614,7 +754,8 @@ class Component extends DCLogic {
   _transcribe(id){ if(!id||this.state.transcribingId||this.state.diarizingId)return;
     const route=this._route();
     this.setState(st=>({ device: st.device==='idle'?'processing':st.device,
-      transcribingId:id, transcribeProgress:0, jobRoute:route }));
+      transcribingId:id, transcribeProgress:0, jobRoute:route,
+      sessions:st.sessions.map(s=>s.id===id?{...s,job:null}:s) }));
     const step = route==='service' ? 5.0 : 1.6;   // local is markedly slower
     this._proc=setInterval(()=>{ this.setState(st=>{ const p=st.transcribeProgress+step;
       if(p>=100){ clearInterval(this._proc); this._proc=null;
@@ -635,7 +776,8 @@ class Component extends DCLogic {
     // Runs on the processing service: may start during a recording, never cancelled by one.
     // The service job is synchronous and opaque — no stage or progress is reported.
     this.setState(st=>({ device: st.device==='idle'?'processing':st.device,
-      diarizingId:id, diarizeProgress:0, jobRoute:'service', numSpeakers:'' }));
+      diarizingId:id, diarizeProgress:0, jobRoute:'service', numSpeakers:'',
+      sessions:st.sessions.map(s=>s.id===id?{...s,job:null}:s) }));
     this.toast(hint?`Diarizing on the service · ${hint}-speaker hint`:'Diarizing on the service…');
     this._proc=setInterval(()=>{ this.setState(st=>{ const p=st.diarizeProgress+3.0;
       if(p>=100){ clearInterval(this._proc); this._proc=null;
@@ -690,6 +832,37 @@ class Component extends DCLogic {
     this.toast('Service cleared · recording only'); };
   toggleTheme=()=>this.setState(st=>({theme:st.theme==='light'?'dark':'light'}));
 
+  // ---- Upload an audio file (v1.3) — the second way a session is born (POST /v1/sessions).
+  // Ingest transcodes to the canonical session.m4a (surfaced as Finalizing/encode), returns 201,
+  // and the session lands pending — never auto-processed, exempt from the min-duration discard.
+  MAX_UPLOAD_MB = 500;
+  openUpload=()=>{
+    if(this.state.device==='recording'||this.state.device==='finalizing'){ this.toast('Upload is disabled while recording'); return; }
+    if(this.state.diskPercent>=90){ this.toast('Disk threshold reached — free space first'); return; }
+    this.setState({uploadOpen:true, uploadFile:null, uploadName:'', uploadDate:'', uploadTime:'', uploadError:null, uploading:false}); };
+  closeUpload=()=>{ if(this.state.uploading)return; this.setState({uploadOpen:false}); };
+  onUploadFile=(e)=>{ const f=e.target.files && e.target.files[0]; if(!f)return; const mb=f.size/1048576;
+    if(mb>this.MAX_UPLOAD_MB){ this.setState({uploadFile:{name:f.name,mb}, uploadError:`Too large — ${mb.toFixed(0)} MB is over the ${this.MAX_UPLOAD_MB} MB limit (413).`}); return; }
+    const ok=/\.(m4a|mp3|wav|aac|flac|ogg|opus|mp4|mov|m4v|wma|aiff?|3gp|amr|webm)$/i.test(f.name);
+    if(!ok){ this.setState({uploadFile:{name:f.name,mb}, uploadError:'Unreadable or unsupported audio (400). Any format ffmpeg can decode is accepted.'}); return; }
+    const base=f.name.replace(/\.[^.]+$/,'');
+    this.setState(st=>({uploadFile:{name:f.name,mb}, uploadError:null, uploadName:st.uploadName||base})); };
+  onUploadName=(e)=>this.setState({uploadName:e.target.value});
+  onUploadDate=(e)=>{ const v=e.target.value; this.setState(st=>({uploadDate:v, uploadTime:v?st.uploadTime:''})); };
+  onUploadTime=(e)=>this.setState({uploadTime:e.target.value});
+  doUpload=()=>{ const f=this.state.uploadFile; if(!f||this.state.uploadError||this.state.uploading)return;
+    if(this.state.device==='recording'){ this.toast('Upload is disabled while recording'); return; }
+    this.setState({uploading:true, device:'finalizing'});
+    setTimeout(()=>{ const id=this.nextId();
+      // Estimate duration from the source (~1 MB/min typical), then the m4a at ~0.24 MB/min.
+      const dur=Math.max(4, Math.round(f.mb*60)); const size=+(dur/60*0.24).toFixed(1);
+      const sess={ id, name:(this.state.uploadName||'').trim(), recordedAt:new Date().toISOString(),
+        occurredDate:this.state.uploadDate||'', occurredTime:this.state.uploadTime||'',
+        status:'pending', dur, size, uploaded:true, transcript:[], diarized:[], speakerMap:{} };
+      this.setState(st=>({ device:'idle', uploading:false, uploadOpen:false,
+        sessions:[sess,...st.sessions], view:'detail', selectedId:id }));
+      this.toast('Uploaded · encoded to session.m4a · pending'); }, 1800); };
+
   _sel(){ return this.state.sessions.find(s=>s.id===this.state.selectedId); }
 
   renderVals(){
@@ -698,7 +871,10 @@ class Component extends DCLogic {
     const ledDotStyle=`display:inline-block;width:11px;height:11px;border-radius:50%;background:rgb(${dev.color});box-shadow:0 0 8px rgba(${dev.color},.7),0 0 0 3px rgba(${dev.color},.18);${dev.pulse?'animation:ledpulse 1.4s ease-in-out infinite;':''}`;
     const navStyle=(v)=>({ color: st.view===v?'var(--color-text)':'var(--color-text-secondary)', bg: st.view===v?'var(--color-surface-hover)':'transparent' });
 
-    const sessions=st.sessions.map(s=>{ const meta=this.statusMeta(s.status); const pid=this.identity(s);
+    // v1.3.3 — a row reflects ITS OWN job when it has one (live via /v1/events jobs-changed in the real UI).
+    const sessions=st.sessions.map(s=>{
+      const jobState = (st.transcribingId===s.id||st.diarizingId===s.id) ? 'processing' : (s.job&&s.job.state)||null;
+      const meta=this.statusMeta(jobState||s.status); const pid=this.identity(s);
       return { ...s, ...pid, statusLabel:meta.label, color:meta.color, colorSoft:this.soft(meta.color),
         durationLabel:s.status==='recording'?this.fmtClock(s.dur):this.fmtDur(s.dur),
         sizeLabel:`${s.size.toFixed(1)} MB`,
@@ -733,7 +909,10 @@ class Component extends DCLogic {
         diarizedCaption:`transcript.md${occSeg} · diarized on the processing service`,
         durationClock:this.fmtClock(raw.dur),
         isFailed:raw.status==='failed', isTranscribing, isDiarizing, isDiarized, isPlain, showTranscript,
-        showTranscribeCTA:raw.status==='pending' && !isTranscribing && !isDiarizing,
+        isQueued:(!!(raw.job&&raw.job.state==='queued')) && !isTranscribing && !isDiarizing,
+        queueLabel: raw.job&&raw.job.queuePos ? `Position ${raw.job.queuePos} in the queue` : 'Waiting in the queue',
+        jobKindLabel: raw.job&&raw.job.kind==='diarize' ? 'diarization' : 'transcription',
+        showTranscribeCTA:raw.status==='pending' && !isTranscribing && !isDiarizing && !(raw.job&&raw.job.state==='queued'),
         failedLine:`${raw.failedError||'unknown error'} — ${raw.failedCount||3} attempts`,
         transcript:raw.transcript,
         sourceLabel: isDiarized?'Diarized':'Transcribed',
@@ -790,6 +969,9 @@ class Component extends DCLogic {
           ? 'No response — transcription is falling back to this device'
           : 'Optional. Without one, transcription runs on the Pi and diarization is unavailable.');
 
+    const uploadBusy = st.device==='recording'||st.device==='finalizing';
+    const uploadBtnBase=`font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 15px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-surface);display:inline-flex;align-items:center;gap:8px;`;
+    const uploadReady = !!st.uploadFile && !st.uploadError;
     return {
       theme:st.theme, themeIcon: st.theme==='light'?'🌙':'☀️',
       deviceLabel: st.device==='recording' ? `Recording · ${this.fmtClock(st.recordElapsed)}` : dev.label,
@@ -806,6 +988,9 @@ class Component extends DCLogic {
       sessions, sessionsCountLabel:`${st.sessions.length} on device · oldest transcribed first`,
       hasPending:pendingCount>0, isEmpty:st.sessions.length===0,
       transcribeAll:this.transcribeAll,
+      openTranscribeAll:this.openTranscribeAll,
+      showTranscribeAll: pendingCount>0 || (canDiarize && st.sessions.some(s=>s.status==='pending'||s.status==='transcribed')),
+      cancelJob:()=>this.cancelJob(this.state.selectedId),
 
       sel, speakerRows,
       download:()=>this.toast('Downloading session.m4a…'),
@@ -840,13 +1025,30 @@ class Component extends DCLogic {
         ? 'On the processing service · progress not reported (opaque) · recording is unaffected'
         : 'faster-whisper on the Pi · a new recording cancels this',
 
+      openUpload:this.openUpload, closeUpload:this.closeUpload, doUpload:this.doUpload,
+      onUploadFile:this.onUploadFile, onUploadName:this.onUploadName, onUploadDate:this.onUploadDate, onUploadTime:this.onUploadTime,
+      uploadOpen:st.uploadOpen, uploading:st.uploading, uploadIdle:!st.uploading,
+      uploadHasFile:!!st.uploadFile, uploadNoFile:!st.uploadFile,
+      uploadFileName: st.uploadFile?st.uploadFile.name:'', uploadFileSize: st.uploadFile?`${st.uploadFile.mb.toFixed(1)} MB`:'',
+      uploadHasError:!!st.uploadError, uploadError:st.uploadError,
+      uploadName:st.uploadName, uploadDate:st.uploadDate, uploadTime:st.uploadTime,
+      uploadSubmitStyle:`font-family:var(--font-sans);font-size:14px;font-weight:600;padding:10px 20px;border-radius:var(--radius-md);border:none;background:var(--color-primary);color:#fff;cursor:${uploadReady?'pointer':'not-allowed'};opacity:${uploadReady?1:.5};`,
+      uploadHeroTitle: uploadBusy?'Disabled while recording':'Create a session from an existing audio file',
+      uploadHeroBtnStyle: uploadBtnBase+`color:${uploadBusy?'var(--color-muted)':'var(--color-text)'};cursor:${uploadBusy?'not-allowed':'pointer'};opacity:${uploadBusy?.6:1};margin-top:16px;`,
+      uploadEmptyBtnStyle: uploadBtnBase+`color:${uploadBusy?'var(--color-muted)':'var(--color-primary)'};border-color:${uploadBusy?'var(--color-border)':'var(--color-primary)'};cursor:${uploadBusy?'not-allowed':'pointer'};opacity:${uploadBusy?.6:1};margin:18px auto 0;`,
+
       confirmOpen:st.confirmId!==null, cancelDelete:this.cancelDelete, doDelete:this.doDelete,
     transcribeModalOpen:st.transcribeModalId!==null && st.transcribeModalId!==undefined,
     openTranscribeModal:this.openTranscribeModal, closeTranscribeModal:this.closeTranscribeModal,
-    chooseLocal:this.chooseLocal, chooseDiarize:this.chooseDiarize, stop:(e)=>e.stopPropagation(),
-    diarizeChoiceStyle:`width:100%;text-align:left;display:flex;gap:14px;align-items:flex-start;margin-top:12px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:16px 18px;cursor:pointer;color:var(--color-text);opacity:${canDiarize?1:.55};`,
-    diarizeChoiceTitle: canDiarize?'Transcribe and label speakers':'This service has no diarization models',
-    diarizeChoiceSub: canDiarize?'Transcribes and labels speakers in one job. You name them afterward.':'Not available on this service.',
+    submitTranscribe:this.submitTranscribe, toggleDiarizeCheck:this.toggleDiarizeCheck,
+    diarizeChecked:st.diarizeChecked, diarizeCheckMark:st.diarizeChecked, canDiarize,
+    submitLabel: st.diarizeChecked?'Transcribe + diarize':'Transcribe',
+    transcribeModalTitle: st.transcribeModalId==='__all__' ? 'Transcribe all' : 'Transcribe this session',
+    transcribeModalSub: st.transcribeModalId==='__all__'
+      ? `Runs ${routeLabel}. Applies to every pending session${canDiarize?' — turn on speaker labels to diarize all undiarized sessions instead':''}.`
+      : `Runs ${routeLabel}. Text with timestamps — turn on speaker labels below if you need them.`,
+    diarizeCheckBoxStyle:`width:20px;height:20px;border-radius:5px;border:2px solid ${st.diarizeChecked?'var(--color-primary)':'var(--color-border)'};background:${st.diarizeChecked?'var(--color-primary)':'transparent'};display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;`,
+    stop:(e)=>e.stopPropagation(),
       toastOpen:!!st.toast, toast:st.toast
     };
   }
