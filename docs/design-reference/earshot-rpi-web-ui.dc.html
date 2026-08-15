@@ -41,6 +41,7 @@
   @keyframes recring { 0%{transform:scale(1);opacity:.5} 100%{transform:scale(1.9);opacity:0} }
   @keyframes fadeup { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
   @keyframes indet { 0%{background-position:-40% 0} 100%{background-position:140% 0} }
+  @keyframes turnhighlight { from{opacity:0;background:transparent} to{opacity:1} }
   input:focus, button:focus-visible { outline:none; box-shadow:var(--shadow-focus); }
 </style>
 </helmet>
@@ -55,8 +56,7 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>
         </div>
         <div style="line-height:1.1;">
-          <div style="font-family:var(--font-serif);font-weight:700;font-size:20px;letter-spacing:-.01em;">earshot</div>
-          <div style="font-family:var(--font-mono);font-size:11px;color:var(--color-muted);margin-top:1px;">Raspberry Pi</div>
+          <div style="font-family:var(--font-serif);font-weight:700;font-size:20px;letter-spacing:-.01em;">Earshot Hub</div>
         </div>
       </div>
 
@@ -322,23 +322,34 @@
 
             <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:22px;position:sticky;top:88px;">
               <div style="font-family:var(--font-serif);font-weight:700;font-size:18px;">Name the speakers</div>
-              <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.55;margin-top:6px;margin-bottom:6px;">Play each detected voice, then type who it is. Names replace the <code style="font-family:var(--font-mono);font-size:.85em;">Speaker N</code> labels throughout this recording.</div>
+              <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.55;margin-top:6px;margin-bottom:6px;">Each voice offers a few things it actually said — read along, play the clearest, then type who it is. Names replace the <code style="font-family:var(--font-mono);font-size:.85em;">Speaker N</code> labels throughout this recording.</div>
               <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);margin-bottom:16px;">{{ sel.namedSummary }}</div>
 
               <div style="display:flex;flex-direction:column;gap:14px;">
                 <sc-for list="{{ speakerRows }}" as="sp" hint-placeholder-count="2">
-                  <div style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:14px;">
+                  <div onClick="{{ sp.activate }}" style="{{ sp.boxStyle }}">
                     <div style="display:flex;align-items:center;gap:9px;">
                       <span style="width:22px;height:22px;border-radius:50%;background:{{ sp.color }};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0;">{{ sp.initial }}</span>
                       <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);flex:1;">{{ sp.label }} · {{ sp.segLabel }}</span>
+                      <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-muted);">{{ sp.posLabel }}</span>
                     </div>
-                    <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
-                      <button onClick="{{ sp.play }}" title="Play a sample of this voice" style="{{ sp.playBtnStyle }}">
-                        <span style="{{ sp.playIconStyle }}"></span>
-                      </button>
-                      <span style="font-family:var(--font-mono);font-size:12px;color:{{ sp.clipColor }};">{{ sp.clipLabel }}</span>
-                    </div>
-                    <input value="{{ sp.name }}" onInput="{{ sp.onName }}" placeholder="Assign a name…" style="margin-top:12px;width:100%;font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 11px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
+                    <sc-if value="{{ sp.hasSamples }}" hint-placeholder-val="{{ true }}">
+                      <div style="display:flex;align-items:center;gap:10px;margin-top:11px;">
+                        <button onClick="{{ sp.play }}" title="Play this clip" style="{{ sp.playBtnStyle }}">
+                          <span style="{{ sp.playIconStyle }}"></span>
+                        </button>
+                        <div style="flex:1;min-width:0;">
+                          <div style="font-family:var(--font-mono);font-size:11px;color:var(--color-muted);">{{ sp.sampleMeta }}</div>
+                        </div>
+                        <sc-if value="{{ sp.multi }}" hint-placeholder-val="{{ false }}">
+                          <div style="display:flex;gap:6px;flex-shrink:0;">
+                            <button onClick="{{ sp.prev }}" title="Previous clip" style="{{ sp.navBtnStyle }}">‹</button>
+                            <button onClick="{{ sp.next }}" title="Next clip" style="{{ sp.navBtnStyle }}">›</button>
+                          </div>
+                        </sc-if>
+                      </div>
+                    </sc-if>
+                    <input value="{{ sp.name }}" onInput="{{ sp.onName }}" onFocus="{{ sp.activate }}" placeholder="Assign a name…" style="margin-top:12px;width:100%;font-family:var(--font-sans);font-size:14px;font-weight:600;padding:9px 11px;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text);" />
                   </div>
                 </sc-for>
               </div>
@@ -347,13 +358,10 @@
             <div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:28px 32px;">
               <div style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);border-bottom:1px solid var(--color-border);padding-bottom:14px;margin-bottom:18px;">{{ sel.diarizedCaption }}</div>
               <sc-for list="{{ sel.diarized }}" as="d" hint-placeholder-count="6">
-                <div style="margin-bottom:20px;">
+                <div style="{{ d.rowStyle }}">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
                     <span style="width:8px;height:8px;border-radius:50%;background:{{ d.color }};"></span>
                     <span style="font-weight:700;font-size:14px;color:{{ d.color }};">{{ d.speaker }}</span>
-                    <sc-if value="{{ d.unnamed }}" hint-placeholder-val="{{ false }}">
-                      <span style="font-family:var(--font-mono);font-size:11px;color:var(--color-muted);border:1px solid var(--color-border);border-radius:var(--radius-pill);padding:1px 8px;">unnamed</span>
-                    </sc-if>
                     <span style="font-family:var(--font-mono);font-size:12px;color:var(--color-muted);">{{ d.t }}</span>
                   </div>
                   <div style="font-size:16px;color:var(--color-text);line-height:1.7;padding-left:16px;">{{ d.text }}</div>
@@ -409,7 +417,7 @@
   <footer style="border-top:1px solid var(--color-border);padding:22px 24px;">
     <div style="max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--color-text-secondary);font-family:var(--font-mono);">
       <span>earshot · Raspberry Pi 4B + ReSpeaker 2-Mic HAT</span>
-      <span>Local-first capture · v1.3.3</span>
+      <span>Local-first capture · v1.3.4</span>
     </div>
   </footer>
 
@@ -580,7 +588,9 @@ class Component extends DCLogic {
     transcribeModalId: null,
     toast: null,
     diskPercent: 46,
-    clipPlaying: null,       // "sessionId::Speaker 1" while a preview clip plays
+    clipPlaying: null,       // "sessionId::Speaker 1::n" while a preview clip plays
+    sampleIdx: {},           // v1.3.4 — selected candidate index per "sessionId::Speaker 1"
+    activeTurnKey: null,     // "sessionId::startSec" — the sample turn highlighted in the transcript
     // Upload an audio file (v1.3): the second creation path (POST /v1/sessions).
     uploadOpen: false, uploadFile: null, uploadName: '', uploadDate: '', uploadTime: '',
     uploadError: null, uploading: false,
@@ -596,13 +606,17 @@ class Component extends DCLogic {
           { t: '00:31', text: "I'd rather not maintain two paths. Let's commit to the new one." },
           { t: '00:39', text: "Agreed. I'll close out the old templates this afternoon." }
         ],
+        // v1.3.4 — turns carry startSec + dur so voice-sample candidates can be filtered and ranked
+        // (representative, not longest). Includes a sub-2s turn and a stutter turn that must be dropped.
         diarized: [
-          { t: '00:00', speaker: 'Speaker 1', text: "Okay, I think everyone's here now, so let's get going." },
-          { t: '00:06', speaker: 'Speaker 1', text: "First thing — the redesign shipped Friday and nothing's on fire yet." },
-          { t: '00:14', speaker: 'Speaker 2', text: "Analytics look fine, bounce rate's actually down a couple points." },
-          { t: '00:23', speaker: 'Speaker 2', text: "Do we want to keep the old layout behind a flag for a week?" },
-          { t: '00:31', speaker: 'Speaker 1', text: "I'd rather not maintain two paths. Let's commit to the new one." },
-          { t: '00:39', speaker: 'Speaker 2', text: "Agreed. I'll close out the old templates this afternoon." }
+          { t: '00:04', startSec: 4,    dur: 5.2, speaker: 'Speaker 1', text: "Okay, I think everyone's here now — let's get going." },
+          { t: '00:14', startSec: 14,   dur: 1.4, speaker: 'Speaker 2', text: "Yeah." },
+          { t: '03:40', startSec: 220,  dur: 4.2, speaker: 'Speaker 2', text: "Analytics look fine — bounce rate's actually down a couple of points since Friday." },
+          { t: '06:43', startSec: 403,  dur: 8.1, speaker: 'Speaker 2', text: "If we can — if we can — if we can, sorry, if we can just get it done." },
+          { t: '10:40', startSec: 640,  dur: 3.6, speaker: 'Speaker 1', text: "I'd rather not maintain two paths. Let's just commit to the new one." },
+          { t: '15:05', startSec: 905,  dur: 3.8, speaker: 'Speaker 2', text: "Do we want to keep the old layout behind a flag for a week, just in case?" },
+          { t: '25:20', startSec: 1520, dur: 2.4, speaker: 'Speaker 1', text: "Right — let's lock that in." },
+          { t: '33:00', startSec: 1980, dur: 5.0, speaker: 'Speaker 2', text: "Agreed. I'll close out the old templates this afternoon and let you know." }
         ],
         speakerMap: { 'Speaker 1': 'Ritchie', 'Speaker 2': 'Sarah' } },
       { id: 'rec-000041', name: '1:1 — homelab migration', recordedAt: '2026-07-16T09:15:00', status: 'transcribed', dur: 1685, size: 6.7,
@@ -787,15 +801,47 @@ class Component extends DCLogic {
             const base=s.transcript.length?s.transcript:this._genTranscript();
             return {...s,status:'diarized',transcript:base,speakerMap:{},diarized:s.diarized.length?s.diarized:this._genDiar(base)}; }) }; }
       return { diarizeProgress:p }; }); },210); }
-  _genDiar(tr){ return tr.map((l,i)=>({ t:l.t, speaker:'Speaker '+((i%2)+1), text:l.text })); }
+  // v1.3.4 — synthesize startSec (parsed from mm:ss) + a plausible dur so live-diarized sessions
+  // also expose multiple voice-sample candidates, not just the hardcoded demo session.
+  _genDiar(tr){ const secs=t=>{ const p=String(t||'0:0').split(':').map(Number); return p.length===2?p[0]*60+p[1]:p[0]; };
+    return tr.map((l,i)=>{ const start=secs(l.t); const next=tr[i+1]?secs(tr[i+1].t):start+5;
+      const words=(l.text||'').split(/\s+/).filter(Boolean).length;
+      const dur=Math.max(1.4, Math.min(next-start||5, Math.round(words*0.42*10)/10));
+      return { t:l.t, startSec:start, dur, speaker:'Speaker '+((i%2)+1), text:l.text }; }); }
 
   // per-session speaker naming (offered on diarized transcripts)
   assignName=(label,val)=>{ const id=this.state.selectedId;
     this.setState(st=>({ sessions:st.sessions.map(s=>{ if(s.id!==id)return s;
       const map={...(s.speakerMap||{})}; if(val.trim()) map[label]=val; else delete map[label];
       return {...s,speakerMap:map}; }) })); };
-  playClip=(label)=>{ const key=this.state.selectedId+'::'+label; this._stopClip(); this.setState({clipPlaying:key});
-    this._clip=setTimeout(()=>this.setState({clipPlaying:null}),2200); };
+  // v1.3.4 — choose up to 5 representative candidate turns per label (GET .../speakers).
+  // Filter (min 2s, drop stutter artifacts by distinct-word ratio), rank toward 4s, spread
+  // across the session, always fall back to the longest so a label with turns is never empty.
+  _voiceSamples(turns){
+    const wordsOf=t=>t.text.toLowerCase().replace(/[^a-z0-9\s]/g,'').split(/\s+/).filter(Boolean);
+    const distinctRatio=t=>{ const w=wordsOf(t); return w.length ? new Set(w).size/w.length : 0; };
+    const usable=turns.filter(t=>t.dur>=2 && distinctRatio(t)>=0.5)
+                      .sort((a,b)=>Math.abs(a.dur-4)-Math.abs(b.dur-4));
+    const take=gap=>{ const out=[]; for(const t of usable){ if(out.length>=5)break;
+      if(out.some(o=>Math.abs(o.startSec-t.startSec)<gap))continue; out.push(t); } return out; };
+    let picks=take(60); if(picks.length<2)picks=take(0);
+    if(!picks.length){ const longest=[...turns].sort((a,b)=>b.dur-a.dur)[0]; if(longest)picks=[longest]; }
+    return picks.sort((a,b)=>a.startSec-b.startSec);
+  }
+  _labelSamples(label){ const s=this._sel(); if(!s||!s.diarized)return [];
+    return this._voiceSamples(s.diarized.filter(d=>d.speaker===label)); }
+  _turnKey(t){ return t?this.state.selectedId+'::'+t.startSec:null; }
+  // v1.3.4 — move between a label's candidate clips; the selected turn lights up in the transcript.
+  stepSample=(label,delta)=>{ const list=this._labelSamples(label); const count=list.length; if(!count)return;
+    const k=this.state.selectedId+'::'+label;
+    this.setState(st=>{ const cur=st.sampleIdx[k]||0; const next=(cur+delta+count)%count;
+      return { sampleIdx:{...st.sampleIdx,[k]:next}, activeTurnKey:this._turnKey(list[next]) }; });
+    this._stopClip(); };
+  // n indexes into the label's samples; clip is bounded to the turn end (never past it → one voice only).
+  playSample=(label,n,clipSec,turn)=>{ const key=this.state.selectedId+'::'+label+'::'+n;
+    this._stopClip(); if(this.state.playing)this._stopPlay();       // only one thing plays at a time
+    this.setState({clipPlaying:key, activeTurnKey:this._turnKey(turn)});
+    this._clip=setTimeout(()=>this.setState({clipPlaying:null}), Math.max(1200, Math.round(clipSec*1000))); };
   _stopClip(){ clearTimeout(this._clip); this._clip=null; if(this.state.clipPlaying)this.setState({clipPlaying:null}); }
 
   togglePlay=()=>{ if(this.state.playing) this._stopPlay(); else this._startPlay(); };
@@ -920,17 +966,33 @@ class Component extends DCLogic {
         showDiarizeBtn: isPlain && canDiarize,
         showRevertBtn: isDiarized,
         namedSummary: `${namedCount} of ${labels.length} named`,
-        diarized:(raw.diarized||[]).map(d=>({ t:d.t, text:d.text, speaker:nameOf(d.speaker), color:colorMap[d.speaker], unnamed:!map[d.speaker] })) };
+        diarized:(raw.diarized||[]).map(d=>{ const active=st.activeTurnKey===(raw.id+'::'+d.startSec); const c=colorMap[d.speaker];
+          return { t:d.t, text:d.text, speaker:nameOf(d.speaker), color:c, unnamed:!map[d.speaker], active,
+            rowStyle: active ? `margin:0 -14px 12px;padding:11px 14px;border-left:3px solid ${c};background:${this.soft(c)};border-radius:var(--radius-md);scroll-margin-top:96px;animation:turnhighlight .9s ease both;` : 'margin-bottom:20px;transition:background .2s ease;' }; }) };
 
       if(isDiarized){ speakerRows=labels.map((label,i)=>{ const segs=raw.diarized.filter(d=>d.speaker===label);
-        const nm=map[label]||''; const playing=st.clipPlaying===(raw.id+'::'+label); const color=colorMap[label];
+        const nm=map[label]||''; const color=colorMap[label];
+        const all=this._voiceSamples(segs); const count=all.length;
+        const idx=Math.min(st.sampleIdx[raw.id+'::'+label]||0, Math.max(0,count-1));
+        const cur=all[idx]; const clipSec=cur?Math.min(cur.dur,6):0;
+        const playing=st.clipPlaying===(raw.id+'::'+label+'::'+idx);
+        const multi=count>1;
         return { label, color, name:nm, initial: nm? nm.trim()[0].toUpperCase() : String(i+1),
           segLabel: `${segs.length} turn${segs.length===1?'':'s'}`,
-          clipLabel: playing?'Playing sample…':'Voice sample',
-          clipColor: playing?color:'var(--color-text-secondary)',
-          playBtnStyle:`width:34px;height:34px;border-radius:50%;cursor:pointer;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;background:${playing?color:'var(--color-surface-hover)'};border:1px solid var(--color-border);`,
+          hasSamples:count>0, multi,
+          posLabel: multi?`Clip ${idx+1} of ${count}`:'Voice sample',
+          sampleMeta: cur?`Highlighted below · ${cur.t} · ${clipSec.toFixed(1).replace(/\.0$/,'')}s clip`:'',
+          playing,
+          playBtnStyle:`width:34px;height:34px;border-radius:50%;cursor:pointer;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;background:${playing?color:'var(--color-surface-hover)'};border:1px solid ${playing?color:'var(--color-border)'};`,
           playIconStyle: playing?'width:11px;height:11px;background:#fff;border-radius:2px;':`width:0;height:0;border-left:11px solid ${color};border-top:7px solid transparent;border-bottom:7px solid transparent;margin-left:3px;`,
-          play:()=>this.playClip(label), onName:(e)=>this.assignName(label,e.target.value) }; });
+          navBtnStyle:`width:28px;height:28px;border-radius:50%;cursor:pointer;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;background:var(--color-surface);border:1px solid var(--color-border);color:var(--color-text-secondary);font-size:14px;`,
+          boxActive: !!cur && st.activeTurnKey===this._turnKey(cur),
+          boxStyle:`border:1px solid ${(!!cur && st.activeTurnKey===this._turnKey(cur))?color:'var(--color-border)'};border-radius:var(--radius-md);padding:14px;cursor:pointer;transition:border-color .2s ease,box-shadow .2s ease;box-shadow:${(!!cur && st.activeTurnKey===this._turnKey(cur))?`0 0 0 3px ${this.soft(color)}`:'none'};`,
+          activate:()=>{ if(cur)this.setState({activeTurnKey:this._turnKey(cur)}); },
+          play:(e)=>{ if(e)e.stopPropagation(); if(cur)this.playSample(label,idx,clipSec,cur); },
+          prev:(e)=>{ if(e)e.stopPropagation(); this.stepSample(label,-1); },
+          next:(e)=>{ if(e)e.stopPropagation(); this.stepSample(label,1); },
+          onName:(e)=>this.assignName(label,e.target.value) }; });
       }
     }
 

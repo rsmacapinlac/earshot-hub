@@ -39,6 +39,59 @@ def segments_from_raw(raw: list[dict]) -> list[Segment]:
     ]
 
 
+# -- voice samples ---------------------------------------------------------- #
+
+# Selection bounds for a speaker's voice samples (rpi/specs/api.md
+# #get-v1sessionsidspeakers). The longest turn is a bad sample: turns grow long
+# through rambling or merged noise, and their opening seconds are the least
+# characteristic part — so candidates are ranked toward IDEAL_SAMPLE_SEC instead.
+MIN_SAMPLE_SEC = 2.0
+IDEAL_SAMPLE_SEC = 4.0
+MIN_DISTINCT_RATIO = 0.5
+SAMPLE_SPACING_SEC = 60.0
+MAX_SAMPLES = 5
+MAX_CLIP_SEC = 6.0
+
+
+def _distinct_word_ratio(text: str) -> float:
+    """Distinct words over total words — low for transcriber stutter artifacts
+    (``"if we can, if we can, if we can, …"``), which are unusable as samples."""
+    words = "".join(c if c.isalnum() else " " for c in text.lower()).split()
+    return len(set(words)) / len(words) if words else 0.0
+
+
+def voice_samples(turns: list[Segment]) -> list[Segment]:
+    """Up to ``MAX_SAMPLES`` representative turns for one speaker, start-ordered.
+
+    A sample's index in the returned list is the ``n`` taken by the sample
+    endpoint, so selection must be deterministic from the transcript alone
+    (rpi/specs/api.md#get-v1sessionsidspeakers)."""
+    usable = [
+        t for t in turns
+        if (t.end - t.start) >= MIN_SAMPLE_SEC
+        and _distinct_word_ratio(t.text) >= MIN_DISTINCT_RATIO
+    ]
+    # Stable sort: equally-ranked turns keep transcript order, so `n` is stable.
+    usable.sort(key=lambda t: abs((t.end - t.start) - IDEAL_SAMPLE_SEC))
+
+    def take(gap: float) -> list[Segment]:
+        held: list[Segment] = []
+        for t in usable:
+            if len(held) >= MAX_SAMPLES:
+                break
+            if any(abs(h.start - t.start) < gap for h in held):
+                continue
+            held.append(t)
+        return held
+
+    picks = take(SAMPLE_SPACING_SEC)
+    if len(picks) < 2:  # relax the spread rather than return almost nothing
+        picks = take(0.0)
+    if not picks and turns:  # never return nothing for a label that has turns
+        picks = [max(turns, key=lambda t: t.end - t.start)]
+    return sorted(picks, key=lambda t: t.start)
+
+
 def normalize_speaker_labels(segments: list[Segment]) -> list[Segment]:
     """Map raw service speaker labels to ``Speaker N`` by first appearance."""
     mapping: dict[str, str] = {}

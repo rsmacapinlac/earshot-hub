@@ -213,14 +213,34 @@ paths:
       - $ref: "#/components/parameters/SpeakerLabel"
     get:
       operationId: getSpeakerSample
-      summary: A short audio sample of that voice, drawn from the session.
+      summary: The audio of one of that label's voice samples.
+      description: >-
+        The clip is exactly `[start, min(end, start + 6s)]` of the chosen turn — it
+        never runs past the turn's end, so a sample can never contain a second voice.
+      parameters:
+        - name: n
+          in: query
+          required: false
+          description: Index into the label's `samples` array.
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: The sample.
+          headers:
+            ETag:
+              description: Changes only when the transcript does.
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, examples: ["private"] }
           content:
             audio/mp4:
               schema: { type: string, format: binary }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "304": { description: Not modified. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404":
+          description: >-
+            No such label, the label has no turns, or `n` is past the end of its
+            `samples` array.
 
   /recording:
     post:
@@ -585,14 +605,34 @@ components:
           type: string
           description: Present only when the session is diarized.
 
+    VoiceSample:
+      type: object
+      additionalProperties: false
+      required: [start, end, text]
+      description: >-
+        One candidate turn offered for listening. `text` is that turn's transcript
+        text, so a client need never offer audio alone.
+      properties:
+        start: { type: number }
+        end: { type: number }
+        text: { type: string }
+
     Speaker:
       type: object
       additionalProperties: false
-      required: [label, name, segments]
+      required: [label, name, segments, samples]
       properties:
         label: { type: string, examples: ["Speaker 1"] }
         name: { type: [string, "null"] }
         segments: { type: integer, minimum: 0 }
+        samples:
+          type: array
+          maxItems: 5
+          description: >-
+            Up to 5 representative turns, ordered by start. A sample's index here is
+            the `n` taken by the sample endpoint. Empty only when the label has no
+            turns at all.
+          items: { $ref: "#/components/schemas/VoiceSample" }
 
     SpeakerList:
       type: object

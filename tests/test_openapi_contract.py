@@ -150,11 +150,25 @@ def test_queued_job_without_route_validates():
 def test_speakers_example_validates():
     payload = {
         "speakers": [
-            {"label": "Speaker 1", "name": "Ritchie", "segments": 14},
-            {"label": "Speaker 2", "name": None, "segments": 9},
+            {"label": "Speaker 1", "name": "Ritchie", "segments": 14,
+             "samples": [
+                 {"start": 61.2, "end": 66.4,
+                  "text": "No, because I think it was ten bucks."},
+                 {"start": 402.7, "end": 407.0,
+                  "text": "Right, and that's the piece I'd push back on."},
+             ]},
+            # samples is [] only when the label has no turns at all.
+            {"label": "Speaker 2", "name": None, "segments": 9, "samples": []},
         ]
     }
     assert validation.is_valid(payload, "SpeakerList")
+
+
+def test_speaker_without_samples_is_rejected():
+    # `samples` is required — a client can always read what a sample says.
+    assert not validation.is_valid(
+        {"label": "Speaker 1", "name": None, "segments": 3}, "Speaker"
+    )
 
 
 def test_service_example_validates():
