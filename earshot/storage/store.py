@@ -232,14 +232,19 @@ class Store:
         )
         self._atomic_write(self.session_dir(session_id) / TRANSCRIPT_MD, md)
 
+    def current_raw_path(self, session_id: int):
+        """The raw transcript backing the current segments — diarized if diarized,
+        else plain. Also the ETag validator source for voice samples."""
+        return self.diarized_raw_path(session_id) if self.is_diarized(session_id) \
+            else self.transcript_raw_path(session_id)
+
     def read_current_segments(self, session_id: int) -> list:
         """The current transcript's segments (diarized raw if diarized, else raw)."""
         import json
 
         from earshot.jobs.transcript import segments_from_raw
 
-        path = self.diarized_raw_path(session_id) if self.is_diarized(session_id) \
-            else self.transcript_raw_path(session_id)
+        path = self.current_raw_path(session_id)
         if not path.exists():
             return []
         return segments_from_raw(json.loads(path.read_text(encoding="utf-8")))
@@ -351,29 +356,58 @@ class Store:
         return base
 
     def speakers_api(self, session_id: int) -> dict[str, Any]:
+        from earshot.jobs.transcript import voice_samples
+
+        # Read the transcript once and group it — a per-label read would reparse
+        # the whole file for every speaker, now that each also carries samples.
+        by_label: dict[str, list] = {}
+        for seg in self.read_current_segments(session_id):
+            if seg.speaker:
+                by_label.setdefault(seg.speaker, []).append(seg)
         return {
             "speakers": [
-                {"label": s["label"], "name": s["name"],
-                 "segments": self._segment_count(session_id, s["label"])}
+                {
+                    "label": s["label"], "name": s["name"],
+                    "segments": len(by_label.get(s["label"], [])),
+                    "samples": [
+                        {"start": t.start, "end": t.end, "text": t.text}
+                        for t in voice_samples(by_label.get(s["label"], []))
+                    ],
+                }
                 for s in self.db.get_speakers(session_id)
             ]
         }
 
-    def _segment_count(self, session_id: int, label: str) -> int:
-        return sum(1 for s in self.read_current_segments(session_id) if s.speaker == label)
+    def speaker_samples(self, session_id: int, label: str) -> list:
+        """*label*'s candidate voice-sample turns, in the same order the API
+        reports them — so ``n`` indexes what the client was shown."""
+        from earshot.jobs.transcript import voice_samples
 
-    def speaker_sample(self, session_id: int, label: str, *, max_seconds: float = 6.0) -> bytes:
-        """A short audio sample of *label*'s voice, cut from ``session.m4a`` for the
-        user to listen to before naming (rpi/specs/api.md). Returns m4a bytes, or
-        raises KeyError if the label has no segments."""
-        segs = [s for s in self.read_current_segments(session_id) if s.speaker == label]
-        if not segs:
-            raise KeyError(label)
-        seg = max(segs, key=lambda s: s.end - s.start)  # the clearest (longest) turn
-        start = max(0.0, seg.start)
-        duration = min(max_seconds, max(1.0, seg.end - seg.start))
+        return voice_samples(
+            [s for s in self.read_current_segments(session_id) if s.speaker == label]
+        )
+
+    def speaker_sample(self, session_id: int, label: str, n: int = 0) -> bytes:
+        """The audio of *label*'s ``n``-th voice sample, cut from ``session.m4a``
+        for the user to listen to before naming (rpi/specs/api.md).
+
+        Raises KeyError if the label has no turns, IndexError if ``n`` is past the
+        end. Returns m4a bytes."""
+        from earshot.jobs.transcript import MAX_CLIP_SEC
         from earshot.recording.encode import cut_sample
 
+        samples = self.speaker_samples(session_id, label)
+        if not samples:
+            raise KeyError(label)
+        if n < 0:  # never let a negative index wrap onto the last sample
+            raise IndexError(n)
+        seg = samples[n]  # IndexError → 404, per the spec
+        start = max(0.0, seg.start)
+        # Bounded to the turn's end, so a clip can never run on into the *next*
+        # speaker's audio — including for a turn shorter than the clip length.
+        duration = min(MAX_CLIP_SEC, seg.end - seg.start)
+        if duration <= 0:  # malformed turn; only reachable via the longest-turn fallback
+            duration = 0.05
         return cut_sample(self.m4a_path(session_id), start=start, duration=duration)
 
     def list_sessions_api(self, active_id: int | None) -> dict[str, Any]:

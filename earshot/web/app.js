@@ -145,6 +145,9 @@ const S = {
   route: { name: "list" },
   modal: null, // {type:'delete'|'transcribe'|'upload', id, diarize?}
   lastStructFp: null,
+  sampleIdx: {},        // "id\0label" → which voice sample is selected
+  activeTurnStart: null, // start of the transcript turn the selected sample was cut from
+  scrollToTurn: false,   // one-shot: scroll to that turn on the next render only
 };
 // The parts of status that change the *layout* (vs. a ticking counter).
 function structFingerprint(st) {
@@ -201,7 +204,7 @@ function renderHeader() {
   let label = dev.label;
   if (st && st.state === "recording" && st.recording) label = "Recording · " + fmtClock(st.recording.elapsed);
   document.getElementById("device-label").textContent = label;
-  document.title = "earshot hub — " + dev.label;
+  document.title = "Earshot Hub — " + dev.label;
   document.getElementById("nav-sessions").classList.toggle("active", S.route.name !== "settings");
   document.getElementById("nav-settings").classList.toggle("active", S.route.name === "settings");
 }
@@ -228,6 +231,9 @@ document.getElementById("brand").addEventListener("click", () => (location.hash 
 async function refreshSessions() { try { S.sessions = (await api.sessions()).sessions; } catch (e) { fail(e); } }
 async function refreshJobs() { try { S.jobs = (await api.jobs()).jobs; } catch (e) { fail(e); } }
 async function loadDetail(id) {
+  // Sample choices belong to the session being viewed; moving to another one
+  // starts over rather than carrying a stale index and highlight across.
+  if (!S.detail || S.detail.id !== id) { S.sampleIdx = {}; S.activeTurnStart = null; }
   try {
     S.detail = await api.session(id);
     S.segments = S.detail.has_transcript ? await api.transcript(id) : [];
@@ -254,6 +260,15 @@ function renderView() {
   if (focusKey) {
     const next = root.querySelector(`[data-focus="${focusKey}"]`);
     if (next) { next.focus(); if (caret != null && next.setSelectionRange) try { next.setSelectionRange(caret, caret); } catch (_) {} }
+  }
+
+  // One-shot: only a deliberate sample action scrolls. renderView also runs on
+  // every SSE jobs/sessions change, and scrolling on those would yank the page
+  // out from under someone mid-type whenever a background job ticks.
+  if (S.scrollToTurn) {
+    S.scrollToTurn = false;
+    const turn = root.querySelector('[data-turn="active"]');
+    if (turn) turn.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 }
 
@@ -531,18 +546,43 @@ function diarizedBody(d) {
   // naming sidebar
   const side = h("div", { class: "card", style: { padding: "22px", position: "sticky", top: "88px", maxHeight: "calc(100vh - 104px)", overflowY: "auto" } },
     h("div", { class: "serif", style: { fontWeight: "700", fontSize: "18px" } }, "Name the speakers"),
-    h("div", { class: "secondary", style: { fontSize: "13px", lineHeight: "1.55", margin: "6px 0 16px" } }, "Play each voice, then type who it is. Names replace the Speaker N labels throughout."));
+    h("div", { class: "secondary", style: { fontSize: "13px", lineHeight: "1.55", margin: "6px 0 16px" } }, "Each voice offers a few things it actually said — read along, play the clearest, then type who it is. Names replace the Speaker N labels throughout."));
   const list = h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } });
   (S.speakers || []).forEach((sp, i) => {
     const color = colorOf[sp.label] || SPEAKER_PALETTE[i % SPEAKER_PALETTE.length];
-    list.appendChild(h("div", { style: { border: "1px solid var(--color-border)", borderRadius: "var(--radius-md)", padding: "14px" } },
+    // The device chooses the candidates (GET /speakers); `n` indexes what it sent.
+    const samples = sp.samples || [];
+    const idx = Math.min(S.sampleIdx[sampleKey(d.id, sp.label)] || 0, Math.max(0, samples.length - 1));
+    const cur = samples[idx] || null;
+    const many = samples.length > 1;
+    const active = cur != null && isActiveTurn(cur.start);
+
+    const card = h("div", { class: "spk-card" + (active ? " active" : ""), style: { borderColor: active ? color : null, boxShadow: active ? `0 0 0 3px color-mix(in srgb, ${color} 12%, transparent)` : null },
+      onclick: () => cur && activateSample(cur.start, false) },
       h("div", { style: { display: "flex", alignItems: "center", gap: "9px" } },
-        h("span", { style: { width: "22px", height: "22px", borderRadius: "50%", background: color, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: "700", fontSize: "11px" } }, (sp.name || "").trim() ? sp.name.trim()[0].toUpperCase() : String(i + 1)),
-        h("span", { class: "mono muted", style: { fontSize: "12px", flex: "1" } }, `${sp.label} · ${sp.segments} turn${sp.segments === 1 ? "" : "s"}`)),
-      h("button", { class: "btn", style: { marginTop: "10px", padding: "6px 12px" }, "aria-label": `Play a sample of ${sp.label}`,
-        onclick: () => playSample(d.id, sp.label) }, "▶ Voice sample"),
-      h("input", { class: "spk-input", "data-focus": "spk-" + sp.label, value: sp.name || "", placeholder: "Assign a name…",
-        "aria-label": `Name for ${sp.label}`, oninput: (e) => updateSpeakerNameLive(d.id, sp.label, e.target.value) })));
+        h("span", { style: { width: "22px", height: "22px", borderRadius: "50%", background: color, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: "700", fontSize: "11px", flexShrink: "0" } }, (sp.name || "").trim() ? sp.name.trim()[0].toUpperCase() : String(i + 1)),
+        h("span", { class: "mono muted", style: { fontSize: "12px", flex: "1" } }, `${sp.label} · ${sp.segments} turn${sp.segments === 1 ? "" : "s"}`),
+        h("span", { class: "mono muted", style: { fontSize: "11px" } }, many ? `Clip ${idx + 1} of ${samples.length}` : (cur ? "Voice sample" : "No sample"))));
+
+    if (cur) {
+      const clipSec = Math.min(cur.end - cur.start, 6);
+      card.appendChild(h("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginTop: "11px" } },
+        h("button", { class: "btn", style: { padding: "6px 11px" }, "aria-label": `Play clip ${idx + 1} of ${sp.label}`,
+          onclick: (e) => { e.stopPropagation(); playSample(d.id, sp.label, idx, cur.start); } }, "▶"),
+        h("div", { class: "mono muted", style: { fontSize: "11px", flex: "1", minWidth: "0" } },
+          `Highlighted below · ${fmtClock(cur.start)} · ${clipSec.toFixed(1).replace(/\.0$/, "")}s clip`),
+        // stopPropagation so the card's activate handler can't clobber the step.
+        many ? h("div", { style: { display: "flex", gap: "6px", flexShrink: "0" } },
+          h("button", { class: "btn", style: { padding: "6px 10px" }, "aria-label": `Previous clip for ${sp.label}`,
+            onclick: (e) => { e.stopPropagation(); stepSample(d.id, sp.label, samples, -1); } }, "‹"),
+          h("button", { class: "btn", style: { padding: "6px 10px" }, "aria-label": `Next clip for ${sp.label}`,
+            onclick: (e) => { e.stopPropagation(); stepSample(d.id, sp.label, samples, 1); } }, "›")) : null));
+    }
+
+    card.appendChild(h("input", { class: "spk-input", "data-focus": "spk-" + sp.label, value: sp.name || "", placeholder: "Assign a name…",
+      "aria-label": `Name for ${sp.label}`, onfocus: () => cur && activateSample(cur.start, false),
+      oninput: (e) => updateSpeakerNameLive(d.id, sp.label, e.target.value) }));
+    list.appendChild(card);
   });
   side.appendChild(list);
 
@@ -552,11 +592,14 @@ function diarizedBody(d) {
   for (const seg of S.segments) {
     const color = colorOf[seg.speaker] || "var(--color-text)";
     const who = (nameOf[seg.speaker] && nameOf[seg.speaker].trim()) ? nameOf[seg.speaker] : seg.speaker;
-    body.appendChild(h("div", { class: "spk-turn" },
+    // The turn the selected voice sample was cut from — reading it while the clip
+    // plays is easier than naming a voice from a clip in the abstract.
+    const active = isActiveTurn(seg.start);
+    body.appendChild(h("div", Object.assign({ class: "spk-turn" + (active ? " active" : "") },
+      active ? { "data-turn": "active", style: { borderLeftColor: color, background: `color-mix(in srgb, ${color} 10%, transparent)` } } : {}),
       h("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px" } },
         h("span", { style: { width: "8px", height: "8px", borderRadius: "50%", background: color } }),
         h("span", { style: { fontWeight: "700", fontSize: "14px", color: color } }, who),
-        !nameOf[seg.speaker] ? h("span", { class: "mono muted", style: { fontSize: "11px", border: "1px solid var(--color-border)", borderRadius: "var(--radius-pill)", padding: "1px 8px" } }, "unnamed") : null,
         h("span", { class: "mono muted", style: { fontSize: "12px" } }, fmtClock(seg.start))),
       h("div", { style: { fontSize: "16px", lineHeight: "1.7", paddingLeft: "16px" } }, seg.text)));
   }
@@ -588,11 +631,46 @@ function updateSpeakerNameLive(id, label, value) {
   }, 500));
 }
 
+// ---- voice samples --------------------------------------------------------
+// Sample starts come from the same transcript the segments do, so they match
+// exactly; the epsilon only guards float formatting across the JSON round-trip.
+function sampleKey(id, label) { return id + "\0" + label; }
+function isActiveTurn(start) {
+  return S.activeTurnStart != null && Math.abs(start - S.activeTurnStart) < 0.001;
+}
+
+// Light the turn and scroll to it. `force` re-runs the fade and the scroll for a
+// clip that is already selected — playing or stepping should always re-orient you,
+// but merely refocusing the name field you are typing in should not.
+function activateSample(start, force) {
+  if (isActiveTurn(start) && !force) return;
+  S.activeTurnStart = start;
+  S.scrollToTurn = true;
+  renderView();
+}
+
+function stepSample(id, label, samples, delta) {
+  const key = sampleKey(id, label);
+  const cur = Math.min(S.sampleIdx[key] || 0, samples.length - 1);
+  const next = (cur + delta + samples.length) % samples.length;
+  S.sampleIdx[key] = next;
+  stopSample();
+  activateSample(samples[next].start, true);
+}
+
 let sampleAudio = null;
-function playSample(id, label) {
-  if (sampleAudio) { sampleAudio.pause(); }
-  sampleAudio = new Audio(`/v1/sessions/${id}/speakers/${encodeURIComponent(label)}/sample`);
+function stopSample() { if (sampleAudio) { sampleAudio.pause(); sampleAudio = null; } }
+// The session player is a native <audio> with no JS handle, so reach for it directly.
+function stopPlayback() {
+  document.querySelectorAll("audio").forEach((el) => { if (!el.paused) el.pause(); });
+}
+
+function playSample(id, label, n, start) {
+  stopSample();      // only one thing plays at a time
+  stopPlayback();
+  sampleAudio = new Audio(`/v1/sessions/${id}/speakers/${encodeURIComponent(label)}/sample?n=${n || 0}`);
   sampleAudio.play().catch(() => toast("Could not play sample"));
+  activateSample(start, true);
 }
 
 // ---- SETTINGS view --------------------------------------------------------

@@ -360,6 +360,98 @@ def test_speaker_sample_returns_audio(make_app):
     assert client.get(f"/v1/sessions/{_sid(sid)}/speakers/Nobody/sample").status_code == 404
 
 
+# -- voice samples (v1.3.4) -------------------------------------------------- #
+
+
+def _diarize(client, sid):
+    job = client.post(f"/v1/sessions/{_sid(sid)}/jobs", json={"kind": "diarize"}).get_json()
+    assert _poll(lambda: client.get(f"/v1/jobs/{job['id']}").get_json()["state"] == "done")
+
+
+def test_speakers_carry_voice_sample_candidates(make_app):
+    # Two well-spaced usable turns for Speaker 1, so it offers a choice.
+    state = FakeState(segments=[
+        Segment(0.0, 4.0, "morning all, shall we get started", "SPEAKER_01"),
+        Segment(10.0, 14.0, "analytics look fine this week", "SPEAKER_00"),
+        Segment(200.0, 204.5, "I would rather not maintain two paths", "SPEAKER_01"),
+    ])
+    app = make_app(state=state)
+    client = app.flask_app.test_client()
+    sid = _seed(app.store, seconds=220.0)
+    _diarize(client, sid)
+
+    speakers = {s["label"]: s for s in
+                client.get(f"/v1/sessions/{_sid(sid)}/speakers").get_json()["speakers"]}
+    one = speakers["Speaker 1"]["samples"]
+    assert [s["start"] for s in one] == [0.0, 200.0]  # start-ordered
+    assert one[0]["text"] == "morning all, shall we get started"
+    assert one[0]["end"] == 4.0
+
+
+def test_sample_n_selects_a_different_candidate(make_app):
+    state = FakeState(segments=[
+        Segment(0.0, 4.0, "morning all, shall we get started", "SPEAKER_01"),
+        Segment(200.0, 204.5, "I would rather not maintain two paths", "SPEAKER_01"),
+    ])
+    app = make_app(state=state)
+    client = app.flask_app.test_client()
+    sid = _seed(app.store, seconds=220.0)
+    _diarize(client, sid)
+    base = f"/v1/sessions/{_sid(sid)}/speakers/Speaker%201/sample"
+
+    first = client.get(base)
+    second = client.get(base + "?n=1")
+    assert first.status_code == 200 and second.status_code == 200
+    # Different turns of a constant-silence file still differ in length (4.0 vs 4.5).
+    assert first.get_data() != second.get_data()
+
+    assert client.get(base + "?n=0").get_data() == first.get_data()  # default is n=0
+    assert client.get(base + "?n=9").status_code == 404      # past the end
+    assert client.get(base + "?n=-1").status_code == 400     # never wraps to the last
+    assert client.get(base + "?n=x").status_code == 400
+
+
+def test_sample_never_runs_past_the_turn_end(make_app, tmp_path):
+    """A sub-1s turn's clip used to be padded to a 1.0s floor, running on into the
+    *next* speaker's audio and misleading the naming it exists to support."""
+    state = FakeState(segments=[
+        # Speaker 1's only turn is 0.4s — filtered out as a candidate, so the
+        # longest-turn fallback selects it, which is the case that used to overrun.
+        Segment(0.0, 0.4, "yeah", "SPEAKER_01"),
+        Segment(0.4, 8.0, "analytics look fine this week and the rest", "SPEAKER_00"),
+    ])
+    app = make_app(state=state)
+    client = app.flask_app.test_client()
+    sid = _seed(app.store)
+    _diarize(client, sid)
+
+    resp = client.get(f"/v1/sessions/{_sid(sid)}/speakers/Speaker%201/sample")
+    assert resp.status_code == 200
+    clip = tmp_path / "sample.m4a"
+    clip.write_bytes(resp.get_data())
+    # Encoder granularity puts an exact 0.4s cut a little over; the old floor was 1.0s.
+    assert probe_duration(clip) < 0.8
+
+
+def test_sample_is_cacheable_and_revalidates(make_app):
+    state = FakeState()
+    app = make_app(state=state)
+    client = app.flask_app.test_client()
+    sid = _seed(app.store)
+    _diarize(client, sid)
+    url = f"/v1/sessions/{_sid(sid)}/speakers/Speaker%201/sample"
+
+    resp = client.get(url)
+    etag = resp.headers.get("ETag")
+    assert etag and "private" in resp.headers.get("Cache-Control", "")
+    assert client.get(url).headers.get("ETag") == etag  # stable while the transcript is
+
+    again = client.get(url, headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    # A different candidate is a different resource.
+    assert client.get(url + "?n=0").headers.get("ETag") == etag
+
+
 def test_local_retranscribe_reverts_diarization(make_app):
     state = FakeState()
     app = make_app(state=state,

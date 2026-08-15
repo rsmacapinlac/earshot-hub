@@ -8,6 +8,7 @@ and an (empty) jobs list. The remaining endpoints land in later milestones.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -254,11 +255,31 @@ def create_app(controller, store, config, worker=None, service=None) -> Flask:
     @app.get("/v1/sessions/<id_str>/speakers/<label>/sample")
     def speaker_sample(id_str: str, label: str):
         session_id, _ = session_row_or_404(id_str)
+        raw_n = request.args.get("n", "0")
         try:
-            audio = store.speaker_sample(session_id, label)
+            n = int(raw_n)
+        except ValueError:
+            raise ApiError(400, "invalid_query", f"n must be an integer, got {raw_n!r}")
+        if n < 0:
+            raise ApiError(400, "invalid_query", "n must be zero or greater")
+        try:
+            audio = store.speaker_sample(session_id, label, n)
         except KeyError:
             raise ApiError(404, "not_found", f"no speaker {label!r} in this session")
-        return app.response_class(audio, mimetype="audio/mp4")
+        except IndexError:
+            raise ApiError(404, "not_found", f"no sample {n} for speaker {label!r}")
+        resp = app.response_class(audio, mimetype="audio/mp4")
+        # Cacheable so the UI can replay samples freely while naming; the validator
+        # changes only when the transcript does (rpi/specs/api.md).
+        resp.set_etag(_sample_etag(session_id, label, n))
+        resp.cache_control.private = True
+        return resp.make_conditional(request)
+
+    def _sample_etag(session_id: int, label: str, n: int) -> str:
+        raw = store.current_raw_path(session_id)
+        stamp = f"{raw.stat().st_mtime_ns}:{raw.stat().st_size}" if raw.exists() else "none"
+        key = f"{session_id}:{label}:{n}:{stamp}"
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
 
     def _has_speaker(session_id: int, label: str) -> bool:
         return any(s["label"] == label for s in store.db.get_speakers(session_id))

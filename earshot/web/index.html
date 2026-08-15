@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>earshot hub</title>
+<title>Earshot Hub</title>
 <style>
   :root {
     --font-serif: Georgia, 'Times New Roman', serif;
@@ -55,7 +55,6 @@
   .brand .mark { width:38px;height:38px;border-radius:var(--radius-md);background:var(--color-primary);
     display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800; }
   .brand .name { font-family:var(--font-serif); font-weight:700; font-size:20px; line-height:1.1; }
-  .brand .sub { font-family:var(--font-mono); font-size:11px; color:var(--color-muted); }
   nav.app { display:flex; gap:8px; }
   nav.app a { cursor:pointer; font-size:14px; font-weight:600; padding:7px 12px; border-radius:var(--radius-md);
     color:var(--color-text-secondary); text-decoration:none; }
@@ -119,7 +118,14 @@
   .seg { display:flex; gap:16px; margin-bottom:14px; line-height:1.7; }
   .seg .t { font-family:var(--font-mono); font-size:13px; color:var(--color-primary); flex-shrink:0; padding-top:1px; }
   .seg .text { font-size:16px; }
-  .spk-turn { margin-bottom:20px; }
+  .spk-turn { margin-bottom:20px; border-left:3px solid transparent; }
+  /* The turn a voice sample was cut from, lit while you listen and name.
+     scroll-margin keeps it clear of the sticky header when scrolled to. */
+  .spk-turn.active { margin:0 -14px 12px; padding:11px 14px; border-radius:var(--radius-md);
+    scroll-margin-top:96px; animation:turnhighlight .9s ease both; }
+  @keyframes turnhighlight { from { background:transparent; border-left-color:transparent; } }
+  .spk-card { border:1px solid var(--color-border); border-radius:var(--radius-md); padding:14px;
+    cursor:pointer; transition:border-color .2s ease, box-shadow .2s ease; }
   .spk-input { margin-top:12px; width:100%; font-size:14px; font-weight:600; padding:9px 11px;
     border-radius:var(--radius-md); border:1px solid var(--color-border); background:var(--color-bg); color:var(--color-text); }
 
@@ -149,9 +155,9 @@
 <body>
   <header class="app">
     <div class="row wrap">
-      <button class="brand" id="brand" aria-label="earshot hub home">
+      <button class="brand" id="brand" aria-label="Earshot Hub home">
         <span class="mark" aria-hidden="true">◉</span>
-        <span><span class="name">earshot hub</span><br><span class="sub">Raspberry Pi</span></span>
+        <span><span class="name">Earshot Hub</span></span>
       </button>
       <nav class="app" aria-label="Primary">
         <a id="nav-sessions" href="#/">Sessions</a>
@@ -171,7 +177,7 @@
 
   <footer class="app">
     <div class="row wrap">
-      <span>earshot hub · Raspberry Pi 4B + ReSpeaker 2-Mic HAT</span>
+      <span>Earshot Hub · Raspberry Pi 4B + ReSpeaker 2-Mic HAT</span>
       <span>Local-first capture · v1.3.3</span>
     </div>
   </footer>
