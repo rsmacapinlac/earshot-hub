@@ -247,6 +247,13 @@ function renderView() {
   const active = document.activeElement;
   const focusKey = active && active.dataset ? active.dataset.focus : null;
   const caret = active && active.selectionStart != null ? active.selectionStart : null;
+  // Emptying #view collapses the document to nothing, so the browser clamps the
+  // scroll position to the top. Capture it first, or every rebuild throws the
+  // reader back to the top of a long transcript. The naming sidebar scrolls
+  // independently (it is sticky with its own overflow), so it needs the same.
+  const pageScroll = window.scrollY;
+  const sideBefore = document.getElementById("spk-side");
+  const sideScroll = sideBefore ? sideBefore.scrollTop : 0;
 
   const root = document.getElementById("view");
   root.innerHTML = "";
@@ -258,9 +265,16 @@ function renderView() {
   renderModal();
   S.lastStructFp = structFingerprint(S.status);  // full render is now current
 
+  // The document has height again, so the captured positions mean something.
+  if (pageScroll) window.scrollTo(0, pageScroll);
+  const sideAfter = document.getElementById("spk-side");
+  if (sideAfter && sideScroll) sideAfter.scrollTop = sideScroll;
+
   if (focusKey) {
     const next = root.querySelector(`[data-focus="${focusKey}"]`);
-    if (next) { next.focus(); if (caret != null && next.setSelectionRange) try { next.setSelectionRange(caret, caret); } catch (_) {} }
+    // preventScroll: focusing a rebuilt node would otherwise scroll it into view
+    // and undo the restore above.
+    if (next) { next.focus({ preventScroll: true }); if (caret != null && next.setSelectionRange) try { next.setSelectionRange(caret, caret); } catch (_) {} }
   }
 
   // One-shot: only a deliberate sample action scrolls. renderView also runs on
@@ -269,7 +283,11 @@ function renderView() {
   if (S.scrollToTurn) {
     S.scrollToTurn = false;
     const turn = root.querySelector('[data-turn="active"]');
-    if (turn) turn.scrollIntoView({ behavior: "smooth", block: "center" });
+    // "nearest", not "center": centring re-scrolls the page on every step even
+    // when the turn is already on screen, which throws you around the transcript
+    // while you are working in the sticky naming panel. This scrolls only when
+    // the turn is actually out of view, and only as far as it must.
+    if (turn) turn.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 }
 
@@ -549,7 +567,7 @@ function diarizedBody(d) {
   const nameOf = {}; (S.speakers || []).forEach((s) => (nameOf[s.label] = s.name));
 
   // naming sidebar
-  const side = h("div", { class: "card", style: { padding: "22px", position: "sticky", top: "88px", maxHeight: "calc(100vh - 104px)", overflowY: "auto" } },
+  const side = h("div", { id: "spk-side", class: "card", style: { padding: "22px", position: "sticky", top: "88px", maxHeight: "calc(100vh - 104px)", overflowY: "auto" } },
     h("div", { class: "serif", style: { fontWeight: "700", fontSize: "18px" } }, "Name the speakers"),
     h("div", { class: "secondary", style: { fontSize: "13px", lineHeight: "1.55", margin: "6px 0 16px" } }, "Each voice offers a few things it actually said — read along, play the clearest, then type who it is. Names replace the Speaker N labels throughout."));
   const list = h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } });
@@ -573,15 +591,18 @@ function diarizedBody(d) {
     if (cur) {
       const clipSec = Math.min(cur.end - cur.start, 6);
       card.appendChild(h("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginTop: "11px" } },
-        h("button", { class: "btn", style: { padding: "6px 11px" }, "aria-label": `Play clip ${idx + 1} of ${sp.label}`,
+        // data-focus keys so the rebuild hands focus back to the button just
+        // pressed — otherwise stepping drops you onto <body> and the keyboard
+        // loses the speaker you were working on.
+        h("button", { class: "btn", "data-focus": "spk-play-" + sp.label, style: { padding: "6px 11px" }, "aria-label": `Play clip ${idx + 1} of ${sp.label}`,
           onclick: (e) => { e.stopPropagation(); playSample(d.id, sp.label, idx, cur.start); } }, "▶"),
         h("div", { class: "mono muted", style: { fontSize: "11px", flex: "1", minWidth: "0" } },
           `Highlighted below · ${fmtClock(cur.start)} · ${clipSec.toFixed(1).replace(/\.0$/, "")}s clip`),
         // stopPropagation so the card's activate handler can't clobber the step.
         many ? h("div", { style: { display: "flex", gap: "6px", flexShrink: "0" } },
-          h("button", { class: "btn", style: { padding: "6px 10px" }, "aria-label": `Previous clip for ${sp.label}`,
+          h("button", { class: "btn", "data-focus": "spk-prev-" + sp.label, style: { padding: "6px 10px" }, "aria-label": `Previous clip for ${sp.label}`,
             onclick: (e) => { e.stopPropagation(); stepSample(d.id, sp.label, samples, -1); } }, "‹"),
-          h("button", { class: "btn", style: { padding: "6px 10px" }, "aria-label": `Next clip for ${sp.label}`,
+          h("button", { class: "btn", "data-focus": "spk-next-" + sp.label, style: { padding: "6px 10px" }, "aria-label": `Next clip for ${sp.label}`,
             onclick: (e) => { e.stopPropagation(); stepSample(d.id, sp.label, samples, 1); } }, "›")) : null));
     }
 
